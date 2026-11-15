@@ -49,6 +49,15 @@ pub fn human_bytes(n: u64) -> String {
 }
 
 impl TransferWidget {
+    fn note_width(&self, r: &TransferRow) -> usize {
+        let (_, note) = self.track(r);
+        r.detail
+            .as_ref()
+            .map(|d| d.chars().count())
+            .or_else(|| note.map(|n| n.chars().count()))
+            .unwrap_or(0)
+    }
+
     fn track(&self, r: &TransferRow) -> (String, Option<String>) {
         let packet = |pos: usize| {
             let mut s: Vec<char> = "─".repeat(TRACK).chars().collect();
@@ -91,9 +100,41 @@ impl Widget for TransferWidget {
         let w = |f: fn(&TransferRow) -> usize, t: usize| {
             self.rows.iter().map(f).max().unwrap_or(0).max(t)
         };
-        let lw = w(|r| r.label.chars().count(), 0);
-        let fw = w(|r| r.from.chars().count(), self.titles.0.chars().count());
-        let tw = w(|r| r.to.chars().count(), self.titles.1.chars().count());
+        let mut lw = w(|r| r.label.chars().count(), 0);
+        let mut fw = w(|r| r.from.chars().count(), self.titles.0.chars().count());
+        let mut tw = w(|r| r.to.chars().count(), self.titles.1.chars().count());
+        // Fit the area: the arrow and the detail text keep their room, names are shortened.
+        let note_w = self
+            .rows
+            .iter()
+            .map(|r| self.note_width(r))
+            .max()
+            .unwrap_or(0)
+            .min(24);
+        let reserve = 2 + 2 + 2 + TRACK + 1 + 2 + if note_w > 0 { note_w + 2 } else { 0 };
+        let avail = (area.width as usize).saturating_sub(reserve);
+        const MIN: usize = 10;
+        while lw + fw + tw > avail && (lw > MIN || fw > MIN || tw > MIN) {
+            let widest = [lw, fw, tw].into_iter().max().unwrap();
+            if lw == widest && lw > MIN {
+                lw -= 1;
+            } else if fw == widest && fw > MIN {
+                fw -= 1;
+            } else if tw > MIN {
+                tw -= 1;
+            } else {
+                break;
+            }
+        }
+        let cut = |s: &str, width: usize| -> String {
+            let n = s.chars().count();
+            if n <= width {
+                s.to_string()
+            } else {
+                let tail: String = s.chars().skip(n - (width.saturating_sub(1))).collect();
+                format!("…{tail}")
+            }
+        };
         let bold = Style::default().add_modifier(Modifier::BOLD);
         let dim = Style::default().add_modifier(Modifier::DIM);
         let mut lines: Vec<Line> = vec![Line::from(vec![
@@ -112,10 +153,10 @@ impl Widget for TransferWidget {
             };
             let mut spans = vec![
                 Span::styled(r.status.glyph_at(self.frame), r.status.style(&self.theme)),
-                Span::raw(format!(" {:<lw$}  ", r.label)),
-                Span::raw(format!("{:<fw$}", r.from)),
+                Span::raw(format!(" {:<lw$}  ", cut(&r.label, lw))),
+                Span::raw(format!("{:<fw$}", cut(&r.from, fw))),
                 Span::styled(format!("  {track}  "), Style::default().fg(color)),
-                Span::raw(format!("{:<tw$}", r.to)),
+                Span::raw(format!("{:<tw$}", cut(&r.to, tw))),
             ];
             let tail = r.detail.clone().or(note);
             if let Some(t) = tail {

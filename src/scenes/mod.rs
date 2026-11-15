@@ -529,6 +529,18 @@ impl Scene {
             titles.first().cloned().unwrap_or_else(|| "from".into()),
             titles.get(1).cloned().unwrap_or_else(|| "to".into()),
         );
+        let strip: Vec<String> = self
+            .def
+            .bind
+            .get("strip")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let clean = |s: String| strip.iter().fold(s, |acc, p| acc.replace(p.as_str(), ""));
         let rows = state
             .event_order
             .iter()
@@ -552,8 +564,8 @@ impl Scene {
                 });
                 Some(TransferRow {
                     label: text("label").unwrap_or_else(|| k.2.clone()),
-                    from: text("from").unwrap_or_default(),
-                    to: text("to").unwrap_or_default(),
+                    from: clean(text("from").unwrap_or_default()),
+                    to: clean(text("to").unwrap_or_default()),
                     status,
                     done: d.get("done").and_then(Value::as_u64),
                     total: d.get("total").and_then(Value::as_u64),

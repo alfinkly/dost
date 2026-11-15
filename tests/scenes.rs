@@ -676,3 +676,29 @@ fn transfer_scene_maps_states_to_glyphs_and_rejects_nothing_without_titles() {
     let plain: SceneDef = serde_yaml_ng::from_str("id: p\nuse: transfer\n").unwrap();
     assert!(Scene::from_def(&plain).is_ok(), "titles are optional");
 }
+
+#[test]
+fn transfer_scene_strips_prefixes_from_from_and_to() {
+    let def: SceneDef = serde_yaml_ng::from_str(
+        "id: s\nuse: transfer\nbind:\n  titles: [PROD, PREPROD]\n  strip: [\"kv/opkit/\"]\n",
+    )
+    .unwrap();
+    let scene = load_scenes(&project(vec![def]))
+        .unwrap()
+        .remove("s")
+        .unwrap();
+    let mut st = RunState::default();
+    st.apply(event(
+        "laptop",
+        "transfer",
+        Some("backend/TOKEN"),
+        json!({"from": "kv/opkit/prod/backend", "to": "kv/opkit/preprod/backend", "state": "done"}),
+    ));
+    let t = draw(&scene, &st);
+    let row = t.lines().find(|l| l.contains("backend/TOKEN")).unwrap();
+    assert!(
+        row.contains("prod/backend") && row.contains("preprod/backend"),
+        "{row}"
+    );
+    assert!(!row.contains("kv/opkit/"), "{row}");
+}

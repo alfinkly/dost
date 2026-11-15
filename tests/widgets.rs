@@ -479,3 +479,33 @@ fn transfer_clips_in_tiny_areas() {
     );
     let _ = render(transfer(1, vec![]), 0, 0);
 }
+
+#[test]
+fn transfer_fits_80_columns_by_ellipsizing_long_names_and_keeps_the_bar_text() {
+    let w = transfer(
+        0,
+        vec![TransferRow {
+            label: "onlyoffice/ONLYOFFICE_JWT_SECRET_VERY_LONG".into(),
+            from: "kv/opkit/prod/onlyoffice-document-server".into(),
+            to: "kv/opkit/preprod/onlyoffice-document-server".into(),
+            status: NodeStatus::Running,
+            done: Some(120 * 1024 * 1024),
+            total: Some(480 * 1024 * 1024),
+            detail: None,
+            age: 99,
+        }],
+    );
+    let t = text(&render(w, 80, 3));
+    let row = t.lines().nth(1).unwrap();
+    assert!(
+        row.contains('…'),
+        "long names are cut with an ellipsis: {row}"
+    );
+    assert!(row.contains("▒") || row.contains('█'), "{row}");
+    assert!(
+        row.contains("120.0 MB / 480.0 MB"),
+        "the bar text must not be pushed out: {row}"
+    );
+    assert!(row.chars().count() <= 80, "the row fits the width: {row}");
+    assert!(t.lines().next().unwrap().contains("PREPROD"), "{t}");
+}

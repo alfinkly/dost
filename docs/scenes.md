@@ -62,11 +62,12 @@ bind:
   crossing the arrow; with `done` and `total` (bytes) it shows a filled bar and `120.0 MB / 480.0 MB`;
   a row that just finished is still animated for a moment and then settles into a solid ✓ arrow; a
   `failed`, `missing` or `refused` row ends in a broken arrow. Optional `bind.titles: [FROM, TO]` names the
-  two columns.
+  two columns, and `bind.strip: ["kv/opkit/"]` removes the listed substrings from `from` and `to`
+  (long names are otherwise cut with an ellipsis to fit the width).
   ```yaml
   id: copy
   use: transfer
-  bind: { titles: [PROD, PREPROD] }
+  bind: { titles: [PROD, PREPROD], strip: ["kv/opkit/"] }
   ```
 - `tree`: a fixed hierarchy drawn top-down, the same picture for every playbook that uses it.
   The structure is yours, in `bind.nodes` (`id`, `label`, optional `parent`; ids are unique, parents must exist, no cycles).
