@@ -23,16 +23,40 @@ async fn real_main() -> Result<i32> {
     let cli = Cli::parse();
     let tty = std::io::stdout().is_terminal() && std::io::stdin().is_terminal();
     match cli.command {
-        Some(Cmd::Doctor) => match doctor::check_ansible() {
-            Ok(info) => {
-                println!("ansible-core {} at {}", info.version, info.path.display());
-                Ok(0)
+        Some(Cmd::Doctor) => {
+            let mut bad = false;
+            match doctor::check_ansible() {
+                Ok(info) => {
+                    println!(
+                        "ansible-core {} at {}: ok",
+                        info.version,
+                        info.path.display()
+                    );
+                    match doctor::check_plugin_loads() {
+                        Ok(()) => println!("callback dost_stream loads: ok"),
+                        Err(e) => {
+                            bad = true;
+                            eprintln!("doctor: callback dost_stream does not load: {e}");
+                        }
+                    }
+                }
+                Err(e) => {
+                    bad = true;
+                    eprintln!("doctor: {e}");
+                }
             }
-            Err(e) => {
-                eprintln!("doctor: {e}");
-                Ok(1)
+            if let Some(root) = find_root(&std::env::current_dir()?) {
+                let problems = doctor::validate_project(&root);
+                if problems.is_empty() {
+                    println!("project {}: ok", root.display());
+                }
+                for p in problems {
+                    bad = true;
+                    eprintln!("doctor: {p}");
+                }
             }
-        },
+            Ok(i32::from(bad))
+        }
         Some(Cmd::Run { id, apply, confirm }) => {
             let (project, store) = open_project()?;
             if tty {
@@ -96,9 +120,26 @@ async fn real_main() -> Result<i32> {
             plain::print_history(&store, &mut std::io::stdout())?;
             Ok(0)
         }
-        Some(Cmd::Init) | Some(Cmd::Demo) => {
-            eprintln!("not implemented yet");
-            Ok(2)
+        Some(Cmd::Init) => {
+            let report = dost::init::init(&std::env::current_dir()?)?;
+            for p in &report.created {
+                println!("created {}", p.display());
+            }
+            for p in &report.skipped {
+                println!("kept    {} (already exists)", p.display());
+            }
+            println!("Fill in `about:` and `done:` in .dost/catalog/*.yml, then run `dost`.");
+            Ok(0)
+        }
+        Some(Cmd::Demo) => {
+            if !tty {
+                bail!("the demo needs a terminal");
+            }
+            let dir = tempfile::tempdir()?;
+            dost::demo::extract(dir.path())?;
+            let project = load_project(dir.path())?;
+            app::run(project, Store::open(dir.path()), None).await?;
+            Ok(0)
         }
         None => {
             let (project, store) = open_project()?;

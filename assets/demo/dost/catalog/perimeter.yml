@@ -1,0 +1,8 @@
+id: perimeter
+title: Perimeter
+playbook: playbooks/perimeter.yml
+about: Closes every port except SSH and HTTPS.
+danger: medium
+scene: ports
+done: |
+  Perimeter closed on {{ hosts | join(", ") }}: only SSH (22) and HTTPS (443) stay open.

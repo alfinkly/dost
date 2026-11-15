@@ -1,0 +1,7 @@
+id: vpn
+title: VPN
+playbook: playbooks/vpn.yml
+about: Builds a tunnel between the nodes, one by one.
+scene: vpn
+done: |
+  The tunnel was built on {{ hosts | join(", ") }}.

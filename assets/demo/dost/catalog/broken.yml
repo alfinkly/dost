@@ -1,0 +1,4 @@
+id: broken
+title: Broken on purpose
+playbook: playbooks/broken.yml
+about: Always fails, to show the cause and the fix of a known error.

@@ -1,0 +1,3 @@
+- match: "Permission denied"
+  cause: The server did not accept your SSH key.
+  fix: Add your key to the agent (ssh-add) or to the server's authorized_keys, then run again.

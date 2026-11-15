@@ -1,0 +1,7 @@
+# Demo: fails on purpose so you can see a known-error hint.
+- hosts: web
+  gather_facts: false
+  tasks:
+    - name: Connect to the server
+      ansible.builtin.fail:
+        msg: "Permission denied (publickey)"

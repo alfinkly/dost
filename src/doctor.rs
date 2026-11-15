@@ -1,4 +1,4 @@
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 
 use semver::Version;
@@ -51,6 +51,84 @@ pub fn check_ansible() -> Result<AnsibleInfo, DoctorError> {
         return Err(DoctorError::TooOld { found: version });
     }
     Ok(AnsibleInfo { version, path })
+}
+
+/// Every problem found in a project: catalog errors, scene errors, event tasks with `no_log`.
+pub fn validate_project(root: &Path) -> Vec<String> {
+    let project = match crate::catalog::load_project(root) {
+        Ok(p) => p,
+        Err(e) => return e.problems().iter().map(|p| p.to_string()).collect(),
+    };
+    let mut out = Vec::new();
+    if let Err(e) = crate::scenes::load_scenes(&project) {
+        out.push(e.to_string());
+    }
+    for cmd in &project.commands {
+        let file = root.join(&cmd.playbook);
+        let Ok(text) = std::fs::read_to_string(&file) else {
+            continue;
+        };
+        let Ok(doc) = serde_yaml_ng::from_str::<serde_json::Value>(&text) else {
+            continue;
+        };
+        warn_no_log_events(&doc, &cmd.playbook, &mut out);
+    }
+    out
+}
+
+fn mentions_dost(v: &serde_json::Value) -> bool {
+    match v {
+        serde_json::Value::Object(m) => m.contains_key("dost") || m.values().any(mentions_dost),
+        serde_json::Value::Array(a) => a.iter().any(mentions_dost),
+        _ => false,
+    }
+}
+
+fn warn_no_log_events(v: &serde_json::Value, file: &Path, out: &mut Vec<String>) {
+    match v {
+        serde_json::Value::Object(m) => {
+            let no_log = matches!(m.get("no_log"), Some(serde_json::Value::Bool(true)))
+                || matches!(
+                    m.get("no_log").and_then(|x| x.as_str()),
+                    Some("true" | "yes")
+                );
+            if no_log && mentions_dost(v) {
+                let name = m
+                    .get("name")
+                    .and_then(|n| n.as_str())
+                    .unwrap_or("(unnamed)");
+                out.push(format!(
+                    "{}: task `{name}` has no_log: true and emits a dost event; the event will be dropped",
+                    file.display()
+                ));
+            }
+            for x in m.values() {
+                warn_no_log_events(x, file, out);
+            }
+        }
+        serde_json::Value::Array(a) => a.iter().for_each(|x| warn_no_log_events(x, file, out)),
+        _ => {}
+    }
+}
+
+/// Check that Ansible can load the bundled `dost_stream` callback.
+pub fn check_plugin_loads() -> Result<(), String> {
+    let dir = tempfile::tempdir().map_err(|e| e.to_string())?;
+    std::fs::write(
+        dir.path().join("dost_stream.py"),
+        crate::stream::CALLBACK_PLUGIN,
+    )
+    .map_err(|e| e.to_string())?;
+    let out = Command::new("ansible-doc")
+        .args(["-t", "callback", "dost_stream"])
+        .env("ANSIBLE_CALLBACK_PLUGINS", dir.path())
+        .output()
+        .map_err(|e| format!("ansible-doc not runnable: {e}"))?;
+    if out.status.success() {
+        Ok(())
+    } else {
+        Err(String::from_utf8_lossy(&out.stderr).trim().to_string())
+    }
 }
 
 #[cfg(test)]

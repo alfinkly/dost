@@ -1,0 +1,17 @@
+# Demo: three nodes build a chain; the last one never joins.
+- hosts: nodes
+  gather_facts: false
+  tasks:
+    - name: Bring up the tunnel
+      ansible.builtin.debug:
+        msg: "tunnel up on {{ inventory_hostname }}"
+    - name: Report link ops to hero
+      when: inventory_hostname == 'ops'
+      ansible.builtin.debug:
+        msg:
+          dost: { v: 1, kind: link, key: "ops<>hero", a: ops, b: hero, state: "up" }
+    - name: Report link hero to mail
+      when: inventory_hostname == 'hero'
+      ansible.builtin.debug:
+        msg:
+          dost: { v: 1, kind: link, key: "hero<>mail", a: hero, b: mail, state: "down" }

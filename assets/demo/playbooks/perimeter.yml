@@ -1,0 +1,15 @@
+# Demo: nothing is really changed, the play only reports what a real one would.
+- hosts: web
+  gather_facts: false
+  tasks:
+    - name: Close ports that are not needed
+      ansible.builtin.debug:
+        msg: "closing 80 and 8080 on {{ inventory_hostname }}"
+    - name: Report the port state
+      ansible.builtin.debug:
+        msg:
+          dost:
+            v: 1
+            kind: ports
+            state: { "22": "on", "80": "off", "443": "on", "8080": "off" }
+            was: { "22": "on", "80": "on", "443": "on", "8080": "on" }
