@@ -272,6 +272,9 @@ fn failure_lines(app: &App) -> Vec<Line<'static>> {
             lines.push(Line::styled(format!("    {m}"), dim()));
         }
     }
+    for f in app.state.event_failures() {
+        lines.push(Line::raw(format!("✗ {}: {}", f.key, f.detail)));
+    }
     for l in app
         .last_tail
         .lines()

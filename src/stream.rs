@@ -192,6 +192,15 @@ pub struct TaskResultRec {
     pub diff: Option<String>,
 }
 
+/// A status event that reports a failure (see `RunState::event_failures`).
+#[derive(Debug, Clone)]
+pub struct EventFailure {
+    pub host: String,
+    pub kind: String,
+    pub key: String,
+    pub detail: String,
+}
+
 #[derive(Debug, Clone)]
 pub struct ItemRec {
     pub play: String,
@@ -331,7 +340,43 @@ impl RunState {
         }
     }
 
+    /// True when a task failed or a status event reports a failure: a run whose Ansible exits 0
+    /// but whose chain has a red link did not succeed.
     pub fn any_failed(&self) -> bool {
-        self.results.iter().any(|r| r.failed || r.unreachable)
+        self.results.iter().any(|r| r.failed || r.unreachable) || !self.event_failures().is_empty()
+    }
+
+    /// Status events whose latest state is a failure (`step` failed/down, `transfer`
+    /// failed/missing/refused, `node` failed/down).
+    pub fn event_failures(&self) -> Vec<EventFailure> {
+        let bad: [(&str, &[&str]); 3] = [
+            ("step", &["failed", "down"]),
+            ("transfer", &["failed", "missing", "refused"]),
+            ("node", &["failed", "down"]),
+        ];
+        self.event_order
+            .iter()
+            .filter_map(|k| {
+                let (host, kind, key) = k;
+                let states = bad.iter().find(|(n, _)| n == kind)?.1;
+                let data = self.events.get(k)?;
+                let state = data.get("state").and_then(Value::as_str)?;
+                if !states.contains(&state) {
+                    return None;
+                }
+                let detail = data
+                    .get("detail")
+                    .and_then(Value::as_str)
+                    .filter(|d| !d.trim().is_empty())
+                    .unwrap_or(state)
+                    .to_string();
+                Some(EventFailure {
+                    host: host.clone(),
+                    kind: kind.clone(),
+                    key: key.clone(),
+                    detail,
+                })
+            })
+            .collect()
     }
 }

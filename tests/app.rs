@@ -436,3 +436,85 @@ fn focus_of_the_command_reaches_the_run_state_and_tick_advances_the_frame() {
     app.on_finished(ok(0));
     assert!(app.run_finished(), "a finished run stops the spinner");
 }
+
+fn event_line(kind: &str, key: &str, state: &str, detail: &str) -> StreamLine {
+    StreamLine::Event {
+        host: "h".into(),
+        kind: kind.into(),
+        key: Some(key.into()),
+        data: serde_json::json!({"state": state, "detail": detail}),
+    }
+}
+
+#[test]
+fn a_red_link_fails_the_check_even_when_ansible_exits_zero() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter)); // check starts
+    app.on_stream(result("h", false, None));
+    app.on_stream(event_line("step", "ports", "failed", "8003 ✗"));
+    app.on_finished(ok(0));
+    assert_eq!(
+        app.screen_kind(),
+        ScreenKind::CheckFailed,
+        "exit 0 with a red link is not a pass"
+    );
+    let t = screen(&app);
+    assert!(
+        t.contains("ports") && t.contains("8003 ✗"),
+        "the red link is listed:\n{t}"
+    );
+}
+
+#[test]
+fn a_red_link_after_apply_shows_failure_and_does_not_advance_the_chain() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(result("h", false, None));
+    app.on_finished(ok(0));
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Enter)),
+        Action::Start {
+            mode: RunMode::Apply,
+            ..
+        }
+    ));
+    app.on_stream(result("h", false, None));
+    app.on_stream(event_line("step", "gpu", "failed", "no ssh session"));
+    app.on_finished(ok(0));
+    let t = screen(&app);
+    assert!(
+        t.contains("The run failed") && t.contains("no ssh session"),
+        "{t}"
+    );
+    assert!(!t.contains("All good"), "{t}");
+    app.handle_key(code(KeyCode::Enter));
+    assert!(
+        screen(&app).contains("0/2"),
+        "the chain must not advance after a red link"
+    );
+}
+
+#[test]
+fn error_rules_also_match_the_details_of_red_links() {
+    let fx = Fixture::new();
+    let mut p = fx.project();
+    p.errors[0].match_ = Regex::new("no ssh session").unwrap();
+    let mut app = App::new(p, Store::open(fx.dir.path()));
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(event_line(
+        "step",
+        "gpu",
+        "failed",
+        "no ssh session to the GPU server",
+    ));
+    app.on_finished(ok(0));
+    assert!(screen(&app).contains("Provider limits new SSH connections"));
+}

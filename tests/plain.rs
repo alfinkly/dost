@@ -224,3 +224,26 @@ fn sigint_in_plain_mode_stops_the_ansible_child() {
         "ansible child {pid} kept running after dost got SIGINT"
     );
 }
+
+#[test]
+fn non_tty_a_red_link_fails_the_run_even_when_ansible_exits_zero() {
+    let (proj, bin) = project(
+        r#"echo '{"t":"start","mode":"'"$DOST_MODE"'"}'
+echo '{"t":"result","host":"web1","task":"t","changed":false,"failed":false,"skipped":false,"unreachable":false,"msg":null,"diff":null}'
+echo '{"t":"event","host":"web1","v":1,"kind":"step","key":"ports","data":{"state":"failed","detail":"8003 no listener"}}'
+echo '{"t":"recap","host":"web1","ok":1,"changed":0,"failed":0,"unreachable":0}'"#,
+    );
+    let out = dost(proj.path(), bin.path(), &["run", "base", "--apply"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert!(!out.status.success(), "exit code must be non-zero:\n{text}");
+    assert!(
+        text.contains("Check failed")
+            && text.contains("ports")
+            && text.contains("8003 no listener"),
+        "{text}"
+    );
+    assert!(
+        !text.contains("All good") && !text.contains("== apply"),
+        "must neither apply nor claim success:\n{text}"
+    );
+}

@@ -58,6 +58,9 @@ pub fn failure_report(project: &Project, state: &RunState, tail: &str) -> String
             out.push_str(&format!("  {m}\n"));
         }
     }
+    for f in state.event_failures() {
+        out.push_str(&format!("FAILED {}: {}\n", f.key, f.detail));
+    }
     for l in tail
         .lines()
         .rev()

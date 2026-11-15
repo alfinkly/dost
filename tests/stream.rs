@@ -219,3 +219,46 @@ fn events_remember_arrival_order_and_frame() {
     let kb = ("h".to_string(), "transfer".to_string(), "b".to_string());
     assert_eq!(st.event_frames[&kb], 3);
 }
+
+fn ev(kind: &str, key: &str, state: &str, detail: Option<&str>) -> StreamLine {
+    StreamLine::Event {
+        host: "h".into(),
+        kind: kind.into(),
+        key: Some(key.into()),
+        data: serde_json::json!({"state": state, "detail": detail}),
+    }
+}
+
+#[test]
+fn a_failed_status_event_makes_the_run_failed_even_when_ansible_exits_zero() {
+    for (kind, state) in [
+        ("step", "failed"),
+        ("transfer", "missing"),
+        ("transfer", "refused"),
+        ("transfer", "failed"),
+        ("node", "down"),
+    ] {
+        let mut st = RunState::default();
+        st.apply(ev(kind, "k", state, Some("boom")));
+        assert!(st.any_failed(), "{kind}/{state} must count as a failure");
+        assert_eq!(st.event_failures().len(), 1);
+        assert_eq!(st.event_failures()[0].detail, "boom");
+    }
+    for (kind, state) in [
+        ("step", "ok"),
+        ("step", "running"),
+        ("transfer", "done"),
+        ("node", "up"),
+    ] {
+        let mut st = RunState::default();
+        st.apply(ev(kind, "k", state, None));
+        assert!(!st.any_failed(), "{kind}/{state} is not a failure");
+    }
+    let mut st = RunState::default();
+    st.apply(ev("step", "k", "failed", Some("old")));
+    st.apply(ev("step", "k", "ok", None));
+    assert!(
+        !st.any_failed(),
+        "a link that recovered later is not failed (last event wins)"
+    );
+}

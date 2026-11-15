@@ -41,6 +41,10 @@ pub fn hints_for<'a>(
             })
         })
         .collect();
+    failures.extend(state.event_failures().into_iter().map(|f| Failure {
+        module: None,
+        text: f.detail,
+    }));
     failures.push(Failure {
         module: None,
         text: tail.to_string(),
