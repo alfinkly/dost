@@ -10,6 +10,15 @@ impl BecomePassword {
         Self(Zeroizing::new(bytes))
     }
 
+    /// Ansible strips whitespace around the contents of a password file, so a password with
+    /// leading or trailing whitespace (or an empty one) would reach `sudo` altered.
+    pub fn is_ansible_safe(&self) -> bool {
+        let b = self.expose();
+        !b.is_empty()
+            && !b.first().unwrap().is_ascii_whitespace()
+            && !b.last().unwrap().is_ascii_whitespace()
+    }
+
     pub fn expose(&self) -> &[u8] {
         &self.0
     }

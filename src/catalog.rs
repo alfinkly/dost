@@ -261,6 +261,16 @@ pub fn load_project(root: &Path) -> Result<Project, CatalogError> {
             ));
         }
     }
+    let mut seen: BTreeSet<&str> = BTreeSet::new();
+    for (file, c) in &commands {
+        if !seen.insert(c.id.as_str()) {
+            problems.push(Problem {
+                file: file.clone(),
+                field: "id".into(),
+                message: format!("duplicate command id `{}`", c.id),
+            });
+        }
+    }
     let ids: BTreeSet<&str> = commands.iter().map(|(_, c)| c.id.as_str()).collect();
     for (file, c) in &commands {
         for a in &c.after {

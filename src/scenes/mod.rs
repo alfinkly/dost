@@ -381,3 +381,16 @@ pub fn load_scenes(project: &Project) -> Result<BTreeMap<String, Scene>, SceneEr
     }
     Ok(out)
 }
+
+/// Only the built-in scenes, used when a project scene is broken.
+pub fn load_builtin_scenes(project: &Project) -> BTreeMap<String, Scene> {
+    let theme = Theme::from_catalog(&project.theme);
+    builtin_defs()
+        .iter()
+        .filter_map(|d| {
+            Scene::with_theme(d, theme.clone())
+                .ok()
+                .map(|s| (d.id.clone(), s))
+        })
+        .collect()
+}

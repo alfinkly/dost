@@ -19,6 +19,12 @@ fn open_project() -> Result<(Project, Store)> {
     Ok((project, store))
 }
 
+fn require_ansible() -> Result<()> {
+    doctor::check_ansible()
+        .map(|_| ())
+        .map_err(|e| anyhow::anyhow!("{e}"))
+}
+
 async fn real_main() -> Result<i32> {
     let cli = Cli::parse();
     let tty = std::io::stdout().is_terminal() && std::io::stdin().is_terminal();
@@ -58,6 +64,7 @@ async fn real_main() -> Result<i32> {
             Ok(i32::from(bad))
         }
         Some(Cmd::Run { id, apply, confirm }) => {
+            require_ansible()?;
             let (project, store) = open_project()?;
             if tty {
                 app::run(project, store, Some(&id)).await?;
@@ -75,6 +82,7 @@ async fn real_main() -> Result<i32> {
             }
         }
         Some(Cmd::Chain { id, apply, confirm }) => {
+            require_ansible()?;
             let (project, store) = open_project()?;
             let Some(chain) = project.chains.iter().find(|c| c.id == id) else {
                 bail!("no chain with id `{id}`");
@@ -135,6 +143,7 @@ async fn real_main() -> Result<i32> {
             if !tty {
                 bail!("the demo needs a terminal");
             }
+            require_ansible()?;
             let dir = tempfile::tempdir()?;
             dost::demo::extract(dir.path())?;
             let project = load_project(dir.path())?;
@@ -142,6 +151,7 @@ async fn real_main() -> Result<i32> {
             Ok(0)
         }
         None => {
+            require_ansible()?;
             let (project, store) = open_project()?;
             if !tty {
                 bail!("dost needs a terminal for the menu; use `dost run <id>` in scripts");

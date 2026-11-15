@@ -14,7 +14,7 @@ use anyhow::{Context, Result};
 use nix::fcntl::{fcntl, FcntlArg, FdFlag};
 use nix::sys::signal::{killpg, Signal};
 use nix::unistd::{pipe, Pid};
-use tokio::io::{AsyncBufReadExt, BufReader};
+use tokio::io::{AsyncBufRead, AsyncBufReadExt, BufReader};
 use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
@@ -23,6 +23,36 @@ use crate::secret::BecomePassword;
 use crate::stream::{parse_line, RunMode, StreamLine};
 
 const TAIL_LINES: usize = 100;
+/// Longest line kept in memory; the rest of a longer line is read and dropped.
+const MAX_LINE_BYTES: usize = 256 * 1024;
+
+/// Next line as lossy UTF-8, truncated to `MAX_LINE_BYTES`. Never fails on bad bytes and
+/// always drains the whole line, so the child cannot block on a full pipe.
+async fn read_line_capped<R: AsyncBufRead + Unpin>(r: &mut R) -> Option<String> {
+    let mut kept: Vec<u8> = Vec::new();
+    let mut got_any = false;
+    loop {
+        let chunk = match r.fill_buf().await {
+            Ok(c) => c,
+            Err(_) => return got_any.then(|| String::from_utf8_lossy(&kept).into_owned()),
+        };
+        if chunk.is_empty() {
+            return got_any.then(|| String::from_utf8_lossy(&kept).into_owned());
+        }
+        got_any = true;
+        let (take, done) = match chunk.iter().position(|b| *b == b'\n') {
+            Some(i) => (i + 1, true),
+            None => (chunk.len(), false),
+        };
+        let room = MAX_LINE_BYTES.saturating_sub(kept.len());
+        let body = &chunk[..take - usize::from(done)];
+        kept.extend_from_slice(&body[..body.len().min(room)]);
+        r.consume(take);
+        if done {
+            return Some(String::from_utf8_lossy(&kept).into_owned());
+        }
+    }
+}
 
 #[derive(Debug, Clone)]
 pub struct RunPlan {
@@ -129,6 +159,11 @@ pub async fn run(
     let mut argv = plan.argv.clone();
     let pw_read = match &become_pw {
         Some(pw) => {
+            if !pw.is_ansible_safe() {
+                anyhow::bail!(
+                    "Ansible strips spaces around the password; passwords with leading or trailing whitespace are not supported"
+                );
+            }
             let r = password_pipe(pw)?;
             argv.push("--become-password-file".into());
             argv.push(format!("/dev/fd/{}", r.as_raw_fd()).into());
@@ -164,8 +199,8 @@ pub async fn run(
     let stdout = child.stdout.take().unwrap();
     let t1 = tail.clone();
     let out_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stdout).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut reader = BufReader::new(stdout);
+        while let Some(line) = read_line_capped(&mut reader).await {
             match parse_line(&line) {
                 Some(l) => {
                     let _ = tx.send(l).await;
@@ -177,8 +212,8 @@ pub async fn run(
     let stderr = child.stderr.take().unwrap();
     let t2 = tail.clone();
     let err_task = tokio::spawn(async move {
-        let mut lines = BufReader::new(stderr).lines();
-        while let Ok(Some(line)) = lines.next_line().await {
+        let mut reader = BufReader::new(stderr);
+        while let Some(line) = read_line_capped(&mut reader).await {
             push_tail(&t2, line);
         }
     });

@@ -7,7 +7,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use crate::catalog::{Command, Danger, Project};
-use crate::hints::{match_errors, Failure};
+use crate::hints::hints_for;
 use crate::runner::{build_plan, run, RunOutcome};
 use crate::secret::BecomePassword;
 use crate::store::{playbook_hash, HistoryRecord, StepStatus, Store};
@@ -52,12 +52,10 @@ pub fn format_line(line: &StreamLine) -> Option<String> {
 /// Failure text, matching hints included.
 pub fn failure_report(project: &Project, state: &RunState, tail: &str) -> String {
     let mut out = String::new();
-    let mut text = Vec::new();
     for r in state.results.iter().filter(|r| r.failed || r.unreachable) {
         out.push_str(&format!("FAILED {}: {}\n", r.host, r.task));
         if let Some(m) = &r.msg {
             out.push_str(&format!("  {m}\n"));
-            text.push(m.clone());
         }
     }
     for l in tail
@@ -70,12 +68,7 @@ pub fn failure_report(project: &Project, state: &RunState, tail: &str) -> String
     {
         out.push_str(&format!("  {l}\n"));
     }
-    text.push(tail.to_string());
-    let failure = Failure {
-        module: None,
-        text: text.join("\n"),
-    };
-    for h in match_errors(&project.errors, &failure) {
+    for h in hints_for(&project.errors, state, tail) {
         out.push_str(&format!("\nCause: {}\nFix:   {}\n", h.cause, h.fix));
         if let Some(l) = &h.link {
             out.push_str(&format!("See:   {l}\n"));
@@ -94,21 +87,37 @@ fn read_password() -> Result<BecomePassword> {
     if line.is_empty() {
         bail!("this command needs a sudo password: pipe it on stdin (first line)");
     }
-    Ok(BecomePassword::new(line.into_bytes()))
+    let pw = BecomePassword::new(line.into_bytes());
+    if !pw.is_ansible_safe() {
+        bail!("Ansible strips spaces around the password; passwords with leading or trailing whitespace are not supported");
+    }
+    Ok(pw)
+}
+
+struct Step<'a> {
+    project: &'a Project,
+    store: &'a Store,
+    cmd: &'a Command,
+    mode: RunMode,
+    plugin_dir: &'a std::path::Path,
 }
 
 async fn run_mode(
-    project: &Project,
-    store: &Store,
-    cmd: &Command,
-    mode: RunMode,
-    plugin_dir: &std::path::Path,
+    step: Step<'_>,
     pw: Option<BecomePassword>,
+    cancel: CancellationToken,
     out: &mut impl Write,
 ) -> Result<(RunState, RunOutcome)> {
+    let Step {
+        project,
+        store,
+        cmd,
+        mode,
+        plugin_dir,
+    } = step;
     let plan = build_plan(&project.root, cmd, mode, plugin_dir);
     let (tx, mut rx) = mpsc::channel::<StreamLine>(256);
-    let task = tokio::spawn(run(plan, pw, tx, CancellationToken::new()));
+    let task = tokio::spawn(run(plan, pw, tx, cancel));
     let mut state = RunState {
         mode,
         ..RunState::default()
@@ -144,6 +153,8 @@ pub async fn run_plain(
     }
     let plugin_dir = tempfile::tempdir()?;
     std::fs::write(plugin_dir.path().join("dost_stream.py"), CALLBACK_PLUGIN)?;
+    let cancel = CancellationToken::new();
+    crate::signals::cancel_on_signals(cancel.clone());
     let pw = if cmd.needs_become {
         Some(read_password()?)
     } else {
@@ -153,15 +164,22 @@ pub async fn run_plain(
     if cmd.check {
         writeln!(out, "== check: {} ==", cmd.title)?;
         let (state, outcome) = run_mode(
-            project,
-            store,
-            cmd,
-            RunMode::Check,
-            plugin_dir.path(),
+            Step {
+                project,
+                store,
+                cmd,
+                mode: RunMode::Check,
+                plugin_dir: plugin_dir.path(),
+            },
             pw.clone(),
+            cancel.clone(),
             out,
         )
         .await?;
+        if outcome.cancelled {
+            writeln!(out, "Interrupted: ansible was stopped.")?;
+            return Ok(130);
+        }
         if outcome.exit_code != Some(0) || state.any_failed() {
             writeln!(out, "Check failed. Nothing was changed.")?;
             write!(
@@ -186,15 +204,25 @@ pub async fn run_plain(
 
     writeln!(out, "== apply: {} ==", cmd.title)?;
     let (state, outcome) = run_mode(
-        project,
-        store,
-        cmd,
-        RunMode::Apply,
-        plugin_dir.path(),
+        Step {
+            project,
+            store,
+            cmd,
+            mode: RunMode::Apply,
+            plugin_dir: plugin_dir.path(),
+        },
         pw,
+        cancel.clone(),
         out,
     )
     .await?;
+    if outcome.cancelled {
+        writeln!(
+            out,
+            "Interrupted: ansible was stopped; hosts may be partly changed."
+        )?;
+        return Ok(130);
+    }
     if outcome.exit_code != Some(0) || state.any_failed() {
         writeln!(out, "The run failed.")?;
         write!(

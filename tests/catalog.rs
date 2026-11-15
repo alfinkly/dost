@@ -120,3 +120,19 @@ fn find_root_walks_up_to_dot_dost() {
     );
     assert!(find_root(Path::new("/")).is_none());
 }
+
+#[test]
+fn duplicate_command_ids_are_an_error() {
+    let dir = project(&[
+        ("playbooks/base.yml", "- hosts: all\n"),
+        (".dost/catalog/a.yml", BASE),
+        (".dost/catalog/b.yml", BASE),
+    ]);
+    let problems = load_project(dir.path()).unwrap_err().problems().to_vec();
+    assert!(
+        problems
+            .iter()
+            .any(|p| p.field == "id" && p.message.contains("base")),
+        "{problems:?}"
+    );
+}

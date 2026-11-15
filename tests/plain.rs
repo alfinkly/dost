@@ -27,7 +27,11 @@ fn project(fake_body: &str) -> (TempDir, TempDir) {
     .unwrap();
     let bin = TempDir::new().unwrap();
     let script = bin.path().join("ansible-playbook");
-    std::fs::write(&script, format!("#!/bin/sh\n{fake_body}\n")).unwrap();
+    std::fs::write(
+        &script,
+        format!("#!/bin/sh\n[ \"$1\" = \"--version\" ] && {{ echo 'ansible-playbook [core 2.21.0]'; exit 0; }}\n{fake_body}\n"),
+    )
+    .unwrap();
     std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
     (proj, bin)
 }
@@ -129,4 +133,94 @@ fn missing_project_gives_clear_message() {
     let out = dost(empty.path(), bin.path(), &["run", "base"]);
     assert!(!out.status.success());
     assert!(String::from_utf8_lossy(&out.stderr).contains("dost init"));
+}
+
+#[test]
+fn run_without_ansible_gives_a_clear_message() {
+    let (proj, _bin) = project(STREAM);
+    let empty = TempDir::new().unwrap();
+    let out = Command::new(env!("CARGO_BIN_EXE_dost"))
+        .args(["run", "base"])
+        .current_dir(proj.path())
+        .env("PATH", empty.path())
+        .output()
+        .unwrap();
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("ansible-playbook was not found"), "{err}");
+}
+
+#[test]
+fn run_with_old_ansible_gives_a_clear_message() {
+    let (proj, bin) = project(STREAM);
+    std::fs::write(
+        bin.path().join("ansible-playbook"),
+        "#!/bin/sh\necho 'ansible-playbook [core 2.12.1]'\n",
+    )
+    .unwrap();
+    let out = dost(proj.path(), bin.path(), &["run", "base"]);
+    assert!(!out.status.success());
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert!(err.contains("too old"), "{err}");
+}
+
+fn alive(pid: &str) -> bool {
+    Command::new("kill")
+        .args(["-0", pid])
+        .output()
+        .map(|o| o.status.success())
+        .unwrap_or(false)
+}
+
+#[test]
+fn sigint_in_plain_mode_stops_the_ansible_child() {
+    use std::process::Stdio;
+    let pidfile = TempDir::new().unwrap();
+    let pf = pidfile.path().join("pid");
+    let (proj, bin) = project(&format!("echo $$ > {}\nsleep 30", pf.display()));
+    let path = format!(
+        "{}:{}",
+        bin.path().display(),
+        std::env::var("PATH").unwrap()
+    );
+    let mut child = Command::new(env!("CARGO_BIN_EXE_dost"))
+        .args(["run", "base", "--apply"])
+        .current_dir(proj.path())
+        .env("PATH", path)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    let mut pid = String::new();
+    for _ in 0..100 {
+        if let Ok(t) = std::fs::read_to_string(&pf) {
+            if !t.trim().is_empty() {
+                pid = t.trim().to_string();
+                break;
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    assert!(!pid.is_empty(), "fake ansible never started");
+    Command::new("kill")
+        .args(["-INT", &child.id().to_string()])
+        .status()
+        .unwrap();
+    let status = child.wait().unwrap();
+    assert!(!status.success());
+    let mut dead = false;
+    for _ in 0..80 {
+        if !alive(&pid) {
+            dead = true;
+            break;
+        }
+        std::thread::sleep(std::time::Duration::from_millis(100));
+    }
+    if !dead {
+        let _ = Command::new("kill").args(["-KILL", &pid]).status();
+    }
+    assert!(
+        dead,
+        "ansible child {pid} kept running after dost got SIGINT"
+    );
 }

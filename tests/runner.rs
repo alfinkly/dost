@@ -80,7 +80,7 @@ fn catalog_fields_map_to_flags() {
 
 #[test]
 fn password_not_in_argv_env_or_display() {
-    let secret = "p@ss w\"ord$1\n";
+    let secret = "p@ss w\"ord$1";
     let pw = BecomePassword::new(secret.as_bytes().to_vec());
     let plan = build_plan(Path::new("/p"), &cmd(), RunMode::Apply, Path::new("/cb"));
     let all = format!("{:?} {:?} {}", plan.argv, plan.env, display_command(&plan));
@@ -108,7 +108,7 @@ cat "$f" > "$OUT_FILE""#,
     plan.argv[0] = script.into();
     plan.env
         .push(("OUT_FILE".into(), out.to_string_lossy().into()));
-    let secret = "p@ss w\"ord$1 ünï\n".as_bytes().to_vec();
+    let secret = "p@ss w\"ord$1 ünï".as_bytes().to_vec();
     let (tx, _rx) = mpsc::channel(16);
     let outcome = run(
         plan,
@@ -159,4 +159,55 @@ exit 2"#,
     assert!(outcome.output_tail.contains("boom"));
     assert!(outcome.output_tail.contains("plain text before callback"));
     assert!(rx.recv().await.is_some());
+}
+
+#[tokio::test]
+async fn non_utf8_and_huge_lines_do_not_stall_the_run() {
+    let dir = tempfile::tempdir().unwrap();
+    let script = fake_ansible(
+        dir.path(),
+        r#"printf '\377\376 not utf8\n'
+head -c 3000000 /dev/zero | tr '\0' a; echo
+echo '{"t":"start","mode":"apply"}'
+head -c 3000000 /dev/zero | tr '\0' b; echo
+echo '{"t":"task","name":"after"}'"#,
+    );
+    let mut plan = build_plan(dir.path(), &cmd(), RunMode::Apply, Path::new("/cb"));
+    plan.argv[0] = script.into();
+    let (tx, mut rx) = mpsc::channel(64);
+    let outcome = tokio::time::timeout(
+        std::time::Duration::from_secs(20),
+        run(plan, None, tx, CancellationToken::new()),
+    )
+    .await
+    .expect("run must not stall on bad output")
+    .unwrap();
+    assert_eq!(outcome.exit_code, Some(0));
+    assert!(
+        outcome.output_tail.len() < 1_000_000,
+        "tail must be bounded: {}",
+        outcome.output_tail.len()
+    );
+    let mut names = vec![];
+    while let Ok(l) = rx.try_recv() {
+        if let dost::stream::StreamLine::TaskStart { name } = l {
+            names.push(name);
+        }
+    }
+    assert_eq!(
+        names,
+        vec!["after".to_string()],
+        "lines after the bad ones must still arrive"
+    );
+}
+
+#[test]
+fn only_passwords_without_edge_whitespace_are_safe_for_ansible() {
+    assert!(BecomePassword::new(b"p@ss w\"ord$1 \xc3\xbc".to_vec()).is_ansible_safe());
+    for bad in [&b" lead"[..], b"trail ", b"nl\n", b"\ttab", b""] {
+        assert!(
+            !BecomePassword::new(bad.to_vec()).is_ansible_safe(),
+            "{bad:?}"
+        );
+    }
 }

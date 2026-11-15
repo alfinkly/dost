@@ -68,6 +68,8 @@ pub async fn run(project: Project, store: Store, start: Option<&str>) -> Result<
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     let mut cancel = CancellationToken::new();
+    let quit_signal = CancellationToken::new();
+    crate::signals::cancel_on_signals(quit_signal.clone());
 
     loop {
         terminal.draw(|f| app.draw(f))?;
@@ -107,6 +109,12 @@ pub async fn run(project: Project, store: Store, start: Option<&str>) -> Result<
                     Ok(outcome) => app.on_finished(outcome),
                     Err(e) => app.on_error(format!("{e:#}")),
                 }
+            }
+            _ = quit_signal.cancelled() => {
+                // SIGTERM/SIGHUP (e.g. the terminal window closed): stop Ansible, then leave.
+                cancel.cancel();
+                let _ = tokio::time::timeout(Duration::from_secs(6), done_rx.recv()).await;
+                break;
             }
             _ = tick.tick() => {}
         }

@@ -77,6 +77,7 @@ class CallbackModule(CallbackBase):
                 "t": "result",
                 "host": result._host.get_name(),
                 "task": result._task.get_name(),
+                "module": str(result._task.action),
                 "changed": bool(res.get("changed", False)),
                 "failed": failed,
                 "skipped": skipped,

@@ -10,9 +10,9 @@ use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 
 use crate::catalog::{Danger, Project};
-use crate::hints::{match_errors, Failure};
+use crate::hints::hints_for;
 use crate::runner::RunOutcome;
-use crate::scenes::{load_scenes, Scene};
+use crate::scenes::{load_builtin_scenes, load_scenes, Scene};
 use crate::secret::BecomePassword;
 use crate::store::{playbook_hash, HistoryRecord, StepStatus, Store};
 use crate::stream::{RunMode, RunState, StreamLine};
@@ -78,7 +78,13 @@ pub struct App {
 
 impl App {
     pub fn new(project: Project, store: Store) -> App {
-        let scenes = load_scenes(&project).unwrap_or_default();
+        let (scenes, scene_problem) = match load_scenes(&project) {
+            Ok(s) => (s, None),
+            Err(e) => (
+                load_builtin_scenes(&project),
+                Some(format!("Scene problem: {e}. Using the built-in scenes.")),
+            ),
+        };
         let mut items: Vec<MenuItem> = (0..project.chains.len()).map(MenuItem::Chain).collect();
         items.extend((0..project.commands.len()).map(MenuItem::Command));
         App {
@@ -102,7 +108,7 @@ impl App {
             last_exit: None,
             last_tail: String::new(),
             error: None,
-            message: None,
+            message: scene_problem,
             next_step: None,
         }
     }
@@ -180,23 +186,8 @@ impl App {
         )
     }
 
-    pub(crate) fn failure(&self) -> Failure {
-        let mut text: Vec<String> = self
-            .state
-            .results
-            .iter()
-            .filter(|r| r.failed || r.unreachable)
-            .filter_map(|r| r.msg.clone())
-            .collect();
-        text.push(self.last_tail.clone());
-        Failure {
-            module: None,
-            text: text.join("\n"),
-        }
-    }
-
     pub(crate) fn hints(&self) -> Vec<&crate::catalog::ErrorRule> {
-        match_errors(&self.project.errors, &self.failure())
+        hints_for(&self.project.errors, &self.state, &self.last_tail)
     }
 
     fn open_command(&mut self, idx: usize) {
@@ -384,8 +375,17 @@ impl App {
                     return Action::None;
                 }
                 let bytes = std::mem::take(&mut self.pw_input);
-                self.password = Some(BecomePassword::new(bytes));
+                let pw = BecomePassword::new(bytes);
                 self.pw_len = 0;
+                if !pw.is_ansible_safe() {
+                    self.message = Some(
+                        "Ansible strips spaces around the password: leading or trailing spaces are not supported. Try again."
+                            .into(),
+                    );
+                    return Action::None;
+                }
+                self.message = None;
+                self.password = Some(pw);
                 let mode = self.pending_mode;
                 self.start(mode)
             }

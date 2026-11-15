@@ -44,6 +44,7 @@ fn result(host: &str, task: &str, changed: bool, failed: bool) -> StreamLine {
         failed,
         skipped: false,
         unreachable: false,
+        module: None,
         msg: None,
         diff: None,
     }

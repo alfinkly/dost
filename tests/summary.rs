@@ -11,6 +11,7 @@ fn state() -> RunState {
             failed,
             skipped: false,
             unreachable: false,
+            module: None,
             msg: None,
             diff: None,
         });

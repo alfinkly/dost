@@ -126,6 +126,7 @@ fn result(host: &str, failed: bool, msg: Option<&str>) -> StreamLine {
         failed,
         skipped: false,
         unreachable: false,
+        module: None,
         msg: msg.map(String::from),
         diff: None,
     }
@@ -328,4 +329,90 @@ fn successful_apply_shows_done_message_and_marks_chain() {
     app.handle_key(code(KeyCode::Enter));
     let t = screen(&app);
     assert!(t.contains("1/2"), "chain progress must advance:\n{t}");
+}
+
+fn result_with_module(host: &str, module: &str, msg: &str) -> StreamLine {
+    StreamLine::TaskResult {
+        host: host.into(),
+        task: "t".into(),
+        changed: false,
+        failed: true,
+        skipped: false,
+        unreachable: false,
+        module: Some(module.into()),
+        msg: Some(msg.into()),
+        diff: None,
+    }
+}
+
+fn project_with_module_rule(fx: &Fixture) -> Project {
+    let mut p = fx.project();
+    p.errors = vec![ErrorRule {
+        match_: Regex::new("refused").unwrap(),
+        module: Some("ansible.builtin.ping".into()),
+        cause: "Ping specific cause".into(),
+        fix: "Ping specific fix".into(),
+        link: None,
+    }];
+    p
+}
+
+fn failed_check_screen(project: Project, fx: &Fixture, module: &str) -> String {
+    let mut app = App::new(project, Store::open(fx.dir.path()));
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(result_with_module("h", module, "connection refused"));
+    app.on_finished(ok(2));
+    screen(&app)
+}
+
+#[test]
+fn rule_with_module_matches_the_failing_module() {
+    let fx = Fixture::new();
+    let hit = failed_check_screen(project_with_module_rule(&fx), &fx, "ansible.builtin.ping");
+    assert!(hit.contains("Ping specific cause"), "{hit}");
+    let miss = failed_check_screen(project_with_module_rule(&fx), &fx, "ansible.builtin.copy");
+    assert!(!miss.contains("Ping specific cause"), "{miss}");
+}
+
+#[test]
+fn bad_user_scene_keeps_builtin_scenes_and_says_so() {
+    let fx = Fixture::new();
+    let mut p = fx.project();
+    p.scenes = vec![serde_yaml_ng::from_str("id: broken\nuse: hologram\n").unwrap()];
+    let mut app = App::new(p, Store::open(fx.dir.path()));
+    let menu = screen(&app);
+    assert!(
+        menu.contains("broken"),
+        "the scene problem must be visible:\n{menu}"
+    );
+    // built-in scenes still render during a run
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(StreamLine::TaskStart { name: "one".into() });
+    app.on_stream(result("h", false, None));
+    assert!(screen(&app).contains("one"), "chain scene must still draw");
+}
+
+#[test]
+fn password_with_edge_whitespace_is_refused() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    type_str(&mut app, " pw ");
+    let act = app.handle_key(code(KeyCode::Enter));
+    assert!(matches!(act, Action::None), "{act:?}");
+    assert_eq!(app.screen_kind(), ScreenKind::Password);
+    assert!(app.password().is_none());
+    assert!(screen(&app).contains("spaces"), "{}", screen(&app));
+    type_str(&mut app, "pw");
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Enter)),
+        Action::Start { .. }
+    ));
 }

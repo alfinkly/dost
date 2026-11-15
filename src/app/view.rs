@@ -142,7 +142,12 @@ fn password(app: &App, f: &mut Frame, area: Rect) {
             dim(),
         ),
     ];
-    f.render_widget(Paragraph::new(lines), area);
+    let mut lines = lines;
+    if let Some(m) = &app.message {
+        lines.push(Line::raw(""));
+        lines.push(Line::raw(m.clone()));
+    }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
 
 fn running(app: &App, f: &mut Frame, area: Rect) {

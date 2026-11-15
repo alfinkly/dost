@@ -136,3 +136,21 @@ fn demo_runs_with_real_ansible_when_enabled() {
     assert!(text.contains("The tunnel was built on"), "{text}");
     assert!(text.contains("event") && text.contains("link"), "{text}");
 }
+
+#[test]
+fn doctor_reports_command_pointing_at_unknown_scene() {
+    let d = TempDir::new().unwrap();
+    fs::create_dir_all(d.path().join(".dost/catalog")).unwrap();
+    fs::create_dir_all(d.path().join("playbooks")).unwrap();
+    fs::write(d.path().join("playbooks/p.yml"), "- hosts: all\n").unwrap();
+    fs::write(
+        d.path().join(".dost/catalog/p.yml"),
+        "id: p\ntitle: P\nplaybook: playbooks/p.yml\nscene: nonexistent\n",
+    )
+    .unwrap();
+    let problems = validate_project(d.path());
+    assert!(
+        problems.iter().any(|p| p.contains("nonexistent")),
+        "{problems:?}"
+    );
+}

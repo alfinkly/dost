@@ -13,7 +13,7 @@ pub struct AnsibleInfo {
 
 #[derive(Debug, thiserror::Error)]
 pub enum DoctorError {
-    #[error("ansible was not found in PATH; install ansible-core {MIN_ANSIBLE} or newer")]
+    #[error("ansible-playbook was not found in PATH; install ansible-core {MIN_ANSIBLE} or newer")]
     NotFound,
     #[error("could not read the ansible version from: {0}")]
     Unparsable(String),
@@ -39,7 +39,7 @@ fn find_in_path(name: &str) -> Option<PathBuf> {
 }
 
 pub fn check_ansible() -> Result<AnsibleInfo, DoctorError> {
-    let path = find_in_path("ansible").ok_or(DoctorError::NotFound)?;
+    let path = find_in_path("ansible-playbook").ok_or(DoctorError::NotFound)?;
     let out = Command::new(&path)
         .arg("--version")
         .output()
@@ -60,8 +60,20 @@ pub fn validate_project(root: &Path) -> Vec<String> {
         Err(e) => return e.problems().iter().map(|p| p.to_string()).collect(),
     };
     let mut out = Vec::new();
-    if let Err(e) = crate::scenes::load_scenes(&project) {
-        out.push(e.to_string());
+    match crate::scenes::load_scenes(&project) {
+        Err(e) => out.push(e.to_string()),
+        Ok(scenes) => {
+            for cmd in &project.commands {
+                if let Some(id) = &cmd.scene {
+                    if !scenes.contains_key(id) {
+                        out.push(format!(
+                            "command `{}`: scene `{id}` does not exist (built-in: chain, ports, vpn, config)",
+                            cmd.id
+                        ));
+                    }
+                }
+            }
+        }
     }
     for cmd in &project.commands {
         let file = root.join(&cmd.playbook);

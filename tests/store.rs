@@ -109,6 +109,7 @@ fn history_record_has_no_password_or_no_log_values() {
         failed: false,
         skipped: false,
         unreachable: false,
+        module: None,
         msg: Some("hunter2".into()),
         diff: Some("password=hunter2".into()),
     });

@@ -9,6 +9,7 @@ pub mod plain;
 pub mod runner;
 pub mod scenes;
 pub mod secret;
+pub mod signals;
 pub mod store;
 pub mod stream;
 pub mod summary;

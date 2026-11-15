@@ -32,6 +32,7 @@ pub enum StreamLine {
         failed: bool,
         skipped: bool,
         unreachable: bool,
+        module: Option<String>,
         msg: Option<String>,
         diff: Option<String>,
     },
@@ -91,6 +92,7 @@ pub fn parse_line(line: &str) -> Option<StreamLine> {
                 failed: b(&v, "failed"),
                 skipped: b(&v, "skipped"),
                 unreachable: b(&v, "unreachable"),
+                module: s(&v, "module"),
                 msg: if no_log { None } else { s(&v, "msg") },
                 diff: if no_log { None } else { s(&v, "diff") },
             })
@@ -133,6 +135,7 @@ pub struct TaskResultRec {
     pub failed: bool,
     pub skipped: bool,
     pub unreachable: bool,
+    pub module: Option<String>,
     pub msg: Option<String>,
     pub diff: Option<String>,
 }
@@ -172,6 +175,7 @@ impl RunState {
                 failed,
                 skipped,
                 unreachable,
+                module,
                 msg,
                 diff,
             } => {
@@ -183,6 +187,7 @@ impl RunState {
                     failed,
                     skipped,
                     unreachable,
+                    module,
                     msg,
                     diff,
                 });
