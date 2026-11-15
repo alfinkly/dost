@@ -242,3 +242,49 @@ fn apply_only_vars_are_added_for_apply_and_not_for_check() {
         "{apply}"
     );
 }
+
+#[tokio::test]
+async fn progress_file_lines_arrive_as_events_while_the_child_runs() {
+    let dir = tempfile::tempdir().unwrap();
+    let go = dir.path().join("go");
+    let script = fake_ansible(
+        dir.path(),
+        r#"echo '{"dost":{"v":1,"kind":"transfer","key":"files","state":"running","done":5,"total":10}}' >> "$DOST_PROGRESS_FILE"
+while [ ! -f "$GO_FILE" ]; do sleep 0.05; done
+echo '{"dost":{"v":1,"kind":"transfer","key":"files","state":"done","done":10,"total":10}}' >> "$DOST_PROGRESS_FILE""#,
+    );
+    let mut plan = build_plan(dir.path(), &cmd(), RunMode::Apply, dir.path());
+    assert!(
+        plan.env.iter().any(|(k, _)| k == "DOST_PROGRESS_FILE"),
+        "the plan must name a progress file"
+    );
+    plan.argv[0] = script.into();
+    plan.env
+        .push(("GO_FILE".into(), go.to_string_lossy().into()));
+    let (tx, mut rx) = mpsc::channel(64);
+    let handle = tokio::spawn(run(plan, None, tx, CancellationToken::new()));
+    // The child waits for `go`, so this holds however loaded the machine is.
+    let first = tokio::time::timeout(std::time::Duration::from_secs(30), rx.recv())
+        .await
+        .expect("the first progress line must arrive while the child is still running")
+        .unwrap();
+    assert!(
+        matches!(first, dost::stream::StreamLine::Event { ref kind, .. } if kind == "transfer"),
+        "{first:?}"
+    );
+    assert!(!handle.is_finished(), "the child is still waiting for `go`");
+    std::fs::write(&go, "").unwrap();
+    let outcome = handle.await.unwrap().unwrap();
+    assert_eq!(outcome.exit_code, Some(0));
+    let mut states = vec![];
+    while let Ok(l) = rx.try_recv() {
+        if let dost::stream::StreamLine::Event { data, .. } = l {
+            states.push(data["state"].as_str().unwrap().to_string());
+        }
+    }
+    assert_eq!(
+        states,
+        vec!["done".to_string()],
+        "the last line is drained after the child exits"
+    );
+}

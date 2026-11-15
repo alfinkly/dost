@@ -18,7 +18,7 @@ use crate::stream::{RunMode, RunState};
 use crate::theme::Theme;
 use crate::widgets::{
     Cell, ChainWidget, LinkState, MapLink, MapNode, MapWidget, NodeStatus, PipelineLink,
-    PipelineWidget, TableWidget, TreeNode, TreeWidget,
+    PipelineWidget, TableWidget, TransferRow, TransferWidget, TreeNode, TreeWidget,
 };
 
 pub use bind::{parse_path, resolve_path, BindError, Seg};
@@ -49,6 +49,7 @@ enum Kind {
     Results,
     Tree,
     Report,
+    Transfer,
 }
 
 #[derive(Debug, Clone)]
@@ -280,6 +281,7 @@ impl Scene {
             "results" => Kind::Results,
             "tree" => Kind::Tree,
             "report" => Kind::Report,
+            "transfer" => Kind::Transfer,
             other => {
                 return Err(SceneError::UnknownKind {
                     id: def.id.clone(),
@@ -509,6 +511,68 @@ impl Scene {
         }
     }
 
+    /// Rows of `transfer` events (key = row id; `from`, `to`, `state`, optional `label`, `done`,
+    /// `total` in bytes, `detail`), in the order they first arrived.
+    fn render_transfer(&self, state: &RunState, area: Rect, buf: &mut Buffer) {
+        let titles: Vec<String> = self
+            .def
+            .bind
+            .get("titles")
+            .and_then(Value::as_array)
+            .map(|a| {
+                a.iter()
+                    .filter_map(|v| v.as_str().map(String::from))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let titles = (
+            titles.first().cloned().unwrap_or_else(|| "from".into()),
+            titles.get(1).cloned().unwrap_or_else(|| "to".into()),
+        );
+        let rows = state
+            .event_order
+            .iter()
+            .filter(|(_, kind, _)| kind == "transfer")
+            .filter_map(|k| {
+                let d = state.events.get(k)?;
+                let text = |name: &str| d.get(name).and_then(Value::as_str).map(String::from);
+                let st = text("state").unwrap_or_default();
+                let status = match st.as_str() {
+                    "running" => NodeStatus::Running,
+                    "done" | "ok" => NodeStatus::Ok,
+                    "failed" | "missing" | "refused" => NodeStatus::Failed,
+                    "pending" => NodeStatus::Pending,
+                    _ => NodeStatus::Unknown,
+                };
+                let detail = text("detail").or_else(|| match st.as_str() {
+                    "missing" => Some("MISSING".into()),
+                    "refused" => Some("still a prod address".into()),
+                    "failed" => Some("failed".into()),
+                    _ => None,
+                });
+                Some(TransferRow {
+                    label: text("label").unwrap_or_else(|| k.2.clone()),
+                    from: text("from").unwrap_or_default(),
+                    to: text("to").unwrap_or_default(),
+                    status,
+                    done: d.get("done").and_then(Value::as_u64),
+                    total: d.get("total").and_then(Value::as_u64),
+                    detail,
+                    age: state
+                        .frame
+                        .saturating_sub(state.event_frames.get(k).copied().unwrap_or(0)),
+                })
+            })
+            .collect();
+        TransferWidget {
+            titles,
+            rows,
+            frame: state.frame,
+            theme: self.theme.clone(),
+        }
+        .render(area, buf);
+    }
+
     /// The node ids of a `tree` scene; `None` for other kinds.
     pub fn tree_node_ids(&self) -> Option<Vec<String>> {
         (self.kind == Kind::Tree).then(|| self.tree.iter().map(|n| n.id.clone()).collect())
@@ -581,6 +645,7 @@ impl Scene {
             Kind::Results => self.render_results(state, inner, buf),
             Kind::Tree => self.render_tree(state, inner, buf),
             Kind::Report => self.render_report(state, inner, buf),
+            Kind::Transfer => self.render_transfer(state, inner, buf),
         }
         if check {
             buf.set_style(inner, Style::default().add_modifier(Modifier::DIM));

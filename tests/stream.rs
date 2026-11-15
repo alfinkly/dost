@@ -160,3 +160,62 @@ fn item_of_a_no_log_task_carries_no_label() {
     let item = r#"{"t":"item","host":"h","task":"secret","item":null,"changed":true,"failed":false,"skipped":false,"no_log":true}"#;
     assert!(matches!(parse_line(item), Some(StreamLine::Item { item, .. }) if item.is_empty()));
 }
+
+use dost::stream::parse_progress_line;
+
+#[test]
+fn progress_line_parses_into_an_event_and_ignores_everything_else() {
+    let line = r#"{"host":"laptop","dost":{"v":1,"kind":"transfer","key":"files","from":"s3://a","to":"s3://b","state":"running","done":5,"total":10}}"#;
+    match parse_progress_line(line) {
+        Some(StreamLine::Event {
+            host,
+            kind,
+            key,
+            data,
+        }) => {
+            assert_eq!(
+                (host.as_str(), kind.as_str(), key.as_deref()),
+                ("laptop", "transfer", Some("files"))
+            );
+            assert_eq!(data["done"], 5);
+            assert!(
+                data.get("v").is_none() && data.get("kind").is_none() && data.get("key").is_none()
+            );
+        }
+        other => panic!("unexpected: {other:?}"),
+    }
+    let no_host = r#"{"dost":{"v":1,"kind":"note","text":"x"}}"#;
+    assert!(
+        matches!(parse_progress_line(no_host), Some(StreamLine::Event { host, .. }) if host == "local")
+    );
+    for bad in [
+        "",
+        "not json",
+        r#"{"dost":{"v":2,"kind":"x"}}"#,
+        r#"{"other":1}"#,
+        r#"{"dost":{"v":1}}"#,
+    ] {
+        assert!(parse_progress_line(bad).is_none(), "{bad}");
+    }
+}
+
+#[test]
+fn events_remember_arrival_order_and_frame() {
+    let mut st = RunState::default();
+    let ev = |k: &str, s: &str| StreamLine::Event {
+        host: "h".into(),
+        kind: "transfer".into(),
+        key: Some(k.into()),
+        data: serde_json::json!({"state": s}),
+    };
+    st.frame = 3;
+    st.apply(ev("b", "running"));
+    st.frame = 9;
+    st.apply(ev("a", "running"));
+    st.frame = 20;
+    st.apply(ev("b", "done")); // an update keeps the original arrival
+    let keys: Vec<&str> = st.event_order.iter().map(|(_, _, k)| k.as_str()).collect();
+    assert_eq!(keys, vec!["b", "a"]);
+    let kb = ("h".to_string(), "transfer".to_string(), "b".to_string());
+    assert_eq!(st.event_frames[&kb], 3);
+}

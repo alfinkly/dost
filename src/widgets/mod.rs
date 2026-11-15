@@ -6,6 +6,7 @@ mod map;
 mod pipeline;
 mod progress;
 mod table;
+mod transfer;
 mod tree;
 
 pub use chain::ChainWidget;
@@ -14,6 +15,7 @@ pub use map::{LinkState, MapLink, MapNode, MapWidget};
 pub use pipeline::{PipelineLink, PipelineWidget};
 pub use progress::ProgressWidget;
 pub use table::{Cell, TableWidget};
+pub use transfer::{TransferRow, TransferWidget};
 pub use tree::{TreeNode, TreeWidget};
 
 use ratatui::buffer::Buffer;

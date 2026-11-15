@@ -606,3 +606,73 @@ fn report_scene_rejects_bad_definitions_at_load() {
     .unwrap();
     assert!(Scene::from_def(&bad_re).is_err());
 }
+
+fn transfer_scene() -> Scene {
+    let def: SceneDef =
+        serde_yaml_ng::from_str("id: tr\nuse: transfer\nbind:\n  titles: [PROD, PREPROD]\n")
+            .unwrap();
+    load_scenes(&project(vec![def]))
+        .unwrap()
+        .remove("tr")
+        .unwrap()
+}
+
+fn tr(key: &str, state: &str, done: Option<u64>, total: Option<u64>) -> StreamLine {
+    event(
+        "laptop",
+        "transfer",
+        Some(key),
+        json!({"label": key, "from": format!("src/{key}"), "to": format!("dst/{key}"), "state": state, "done": done, "total": total}),
+    )
+}
+
+#[test]
+fn transfer_scene_lists_rows_in_arrival_order_with_titles_and_progress() {
+    let scene = transfer_scene();
+    let mut st = RunState::default();
+    st.apply(tr(
+        "zeta",
+        "running",
+        Some(5 * 1024 * 1024),
+        Some(10 * 1024 * 1024),
+    ));
+    st.apply(tr("alpha", "done", None, None));
+    let t = draw(&scene, &st);
+    let lines: Vec<&str> = t.lines().collect();
+    assert!(
+        lines[0].contains("PROD") && lines[0].contains("PREPROD"),
+        "{t}"
+    );
+    let zeta = lines.iter().position(|l| l.contains("zeta")).unwrap();
+    let alpha = lines.iter().position(|l| l.contains("alpha")).unwrap();
+    assert!(
+        zeta < alpha,
+        "rows keep arrival order, not alphabetical:\n{t}"
+    );
+    assert!(
+        lines[zeta].contains("5.0 MB")
+            && lines[zeta].contains("10.0 MB")
+            && lines[zeta].contains("src/zeta")
+            && lines[zeta].contains("dst/zeta"),
+        "{t}"
+    );
+}
+
+#[test]
+fn transfer_scene_maps_states_to_glyphs_and_rejects_nothing_without_titles() {
+    let scene = transfer_scene();
+    let mut st = RunState::default();
+    st.apply(tr("ok", "done", None, None));
+    st.apply(tr("bad", "missing", None, None));
+    st.apply(tr("wait", "pending", None, None));
+    let t = draw(&scene, &st);
+    assert!(t.lines().find(|l| l.contains("ok")).unwrap().contains('✓'));
+    assert!(t.lines().find(|l| l.contains("bad")).unwrap().contains('✗'));
+    assert!(t
+        .lines()
+        .find(|l| l.contains("wait"))
+        .unwrap()
+        .contains('○'));
+    let plain: SceneDef = serde_yaml_ng::from_str("id: p\nuse: transfer\n").unwrap();
+    assert!(Scene::from_def(&plain).is_ok(), "titles are optional");
+}

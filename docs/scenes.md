@@ -57,6 +57,17 @@ bind:
   A rule that matches loop items makes one row per item, otherwise one row per task result. With
   `focus: [host, ...]` in the catalog only those hosts' rows are shown (the others are hidden, which
   matters for plays that run on every node); when several hosts remain, rows get a `host:` prefix.
+- `transfer`: things moving from one place to another, one row per `transfer` event, in the order
+  they first arrived: `label  from  ──▶  to  detail`. A running row without a total shows a packet
+  crossing the arrow; with `done` and `total` (bytes) it shows a filled bar and `120.0 MB / 480.0 MB`;
+  a row that just finished is still animated for a moment and then settles into a solid ✓ arrow; a
+  `failed`, `missing` or `refused` row ends in a broken arrow. Optional `bind.titles: [FROM, TO]` names the
+  two columns.
+  ```yaml
+  id: copy
+  use: transfer
+  bind: { titles: [PROD, PREPROD] }
+  ```
 - `tree`: a fixed hierarchy drawn top-down, the same picture for every playbook that uses it.
   The structure is yours, in `bind.nodes` (`id`, `label`, optional `parent`; ids are unique, parents must exist, no cycles).
   A command declares which nodes it works on with `focus: [id, ...]` in the catalog: those nodes

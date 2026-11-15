@@ -352,3 +352,130 @@ fn pipeline_clips_without_panicking_in_tiny_areas() {
     let _ = render(pipeline(1, NodeStatus::Running), 5, 2);
     let _ = render(pipeline(1, NodeStatus::Running), 0, 0);
 }
+
+use dost::widgets::{TransferRow, TransferWidget};
+
+fn trow(
+    label: &str,
+    st: NodeStatus,
+    done: Option<u64>,
+    total: Option<u64>,
+    detail: Option<&str>,
+    age: u64,
+) -> TransferRow {
+    TransferRow {
+        label: label.into(),
+        from: "kv/prod/backend".into(),
+        to: "kv/preprod/backend".into(),
+        status: st,
+        done,
+        total,
+        detail: detail.map(String::from),
+        age,
+    }
+}
+
+fn transfer(frame: u64, rows: Vec<TransferRow>) -> TransferWidget {
+    TransferWidget {
+        titles: ("PROD".into(), "PREPROD".into()),
+        rows,
+        frame,
+        theme: Theme::default(),
+    }
+}
+
+#[test]
+fn transfer_shows_titles_from_to_and_a_megabyte_bar() {
+    let w = transfer(
+        0,
+        vec![trow(
+            "files",
+            NodeStatus::Running,
+            Some(120 * 1024 * 1024),
+            Some(480 * 1024 * 1024),
+            None,
+            99,
+        )],
+    );
+    let t = text(&render(w, 100, 4));
+    assert!(
+        t.lines().next().unwrap().contains("PROD") && t.lines().next().unwrap().contains("PREPROD"),
+        "{t}"
+    );
+    assert!(
+        t.contains("kv/prod/backend") && t.contains("kv/preprod/backend"),
+        "{t}"
+    );
+    assert!(
+        t.contains("120.0 MB") && t.contains("480.0 MB"),
+        "bytes shown as done / max:\n{t}"
+    );
+    assert!(
+        t.contains('█') && t.contains('░'),
+        "a bar with a filled and an empty part:\n{t}"
+    );
+}
+
+#[test]
+fn transfer_done_row_is_ticked_and_missing_row_is_crossed() {
+    let w = transfer(
+        0,
+        vec![
+            trow("A", NodeStatus::Ok, None, None, None, 99),
+            trow("B", NodeStatus::Failed, None, None, Some("MISSING"), 99),
+        ],
+    );
+    let t = text(&render(w, 100, 5));
+    let a = t.lines().find(|l| l.contains(" A ")).unwrap();
+    let b = t.lines().find(|l| l.contains(" B ")).unwrap();
+    assert!(a.contains('✓') && a.contains("═") && a.contains('▶'), "{t}");
+    assert!(
+        b.contains('✗') && b.contains("MISSING") && b.contains('╳'),
+        "{t}"
+    );
+}
+
+#[test]
+fn transfer_packet_moves_with_the_frame_while_running_and_on_arrival() {
+    let running = |f| {
+        text(&render(
+            transfer(
+                f,
+                vec![trow("A", NodeStatus::Running, None, None, None, 99)],
+            ),
+            100,
+            3,
+        ))
+    };
+    assert_ne!(
+        running(0),
+        running(2),
+        "a running transfer without a total animates"
+    );
+    let arriving = |f, age| {
+        text(&render(
+            transfer(f, vec![trow("A", NodeStatus::Ok, None, None, None, age)]),
+            100,
+            3,
+        ))
+    };
+    assert_ne!(
+        arriving(0, 0),
+        arriving(0, 4),
+        "a row that just arrived is still moving"
+    );
+    assert_eq!(arriving(0, 40), arriving(7, 40), "a settled row is still");
+}
+
+#[test]
+fn transfer_clips_in_tiny_areas() {
+    let _ = render(
+        transfer(
+            1,
+            vec![trow("A", NodeStatus::Running, Some(1), Some(2), None, 0)],
+        ),
+        8,
+        2,
+    );
+    let _ = render(transfer(1, vec![]), 0, 0);
+}

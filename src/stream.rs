@@ -145,6 +145,31 @@ pub fn parse_line(line: &str) -> Option<StreamLine> {
     }
 }
 
+/// A line of the progress side channel (`DOST_PROGRESS_FILE`): `{"host": "...", "dost": {...}}`,
+/// where `dost` has the same shape as an event message. The host defaults to `local`.
+pub fn parse_progress_line(line: &str) -> Option<StreamLine> {
+    if line.len() > MAX_LINE {
+        return None;
+    }
+    let v: Value = serde_json::from_str(line).ok()?;
+    let body = v.get("dost")?.as_object()?;
+    if body.get("v").and_then(Value::as_u64) != Some(1) {
+        return None;
+    }
+    let kind = body.get("kind")?.as_str()?.to_string();
+    let key = body.get("key").and_then(Value::as_str).map(String::from);
+    let mut data = body.clone();
+    for k in ["v", "kind", "key"] {
+        data.remove(k);
+    }
+    Some(StreamLine::Event {
+        host: s(&v, "host").unwrap_or_else(|| "local".into()),
+        kind,
+        key,
+        data: Value::Object(data),
+    })
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Recap {
     pub ok: u32,
@@ -198,6 +223,9 @@ pub struct RunState {
     pub items: Vec<ItemRec>,
     /// Keyed by (host, kind, key); same key overwrites, different keys accumulate.
     pub events: BTreeMap<(String, String, String), Value>,
+    /// Event keys in the order they first arrived, and the animation frame of that arrival.
+    pub event_order: Vec<(String, String, String)>,
+    pub event_frames: BTreeMap<(String, String, String), u64>,
     pub recap: BTreeMap<String, Recap>,
 }
 
@@ -274,8 +302,12 @@ impl RunState {
                 data,
             } => {
                 self.see_host(&host);
-                self.events
-                    .insert((host, kind, key.unwrap_or_default()), data);
+                let k = (host, kind, key.unwrap_or_default());
+                if !self.events.contains_key(&k) {
+                    self.event_order.push(k.clone());
+                    self.event_frames.insert(k.clone(), self.frame);
+                }
+                self.events.insert(k, data);
             }
             StreamLine::Recap {
                 host,

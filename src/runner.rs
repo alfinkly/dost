@@ -20,7 +20,7 @@ use tokio_util::sync::CancellationToken;
 
 use crate::catalog::Command;
 use crate::secret::BecomePassword;
-use crate::stream::{parse_line, RunMode, StreamLine};
+use crate::stream::{parse_line, parse_progress_line, RunMode, StreamLine};
 
 const TAIL_LINES: usize = 100;
 /// Longest line kept in memory; the rest of a longer line is read and dropped.
@@ -70,6 +70,37 @@ pub struct RunOutcome {
     pub output_tail: String,
 }
 
+/// Follow the progress side channel: scripts append `{"dost": {...}}` lines to the file named by
+/// `DOST_PROGRESS_FILE` and they arrive as events while the run is still going.
+async fn tail_progress(
+    path: PathBuf,
+    tx: mpsc::Sender<StreamLine>,
+    stop: Arc<std::sync::atomic::AtomicBool>,
+) {
+    use std::sync::atomic::Ordering;
+    let mut offset = 0usize;
+    loop {
+        let stopping = stop.load(Ordering::SeqCst);
+        if let Ok(bytes) = tokio::fs::read(&path).await {
+            if bytes.len() > offset {
+                let fresh = &bytes[offset..];
+                if let Some(end) = fresh.iter().rposition(|b| *b == b'\n') {
+                    for line in String::from_utf8_lossy(&fresh[..end]).lines() {
+                        if let Some(l) = parse_progress_line(line) {
+                            let _ = tx.send(l).await;
+                        }
+                    }
+                    offset += end + 1;
+                }
+            }
+        }
+        if stopping {
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(50)).await;
+    }
+}
+
 pub fn build_plan(root: &Path, cmd: &Command, mode: RunMode, plugin_dir: &Path) -> RunPlan {
     let mut argv: Vec<OsString> = vec!["ansible-playbook".into(), cmd.playbook.clone().into()];
     if mode == RunMode::Check {
@@ -107,6 +138,13 @@ pub fn build_plan(root: &Path, cmd: &Command, mode: RunMode, plugin_dir: &Path) 
             "dost_stream".to_string(),
         ),
         ("DOST_MODE".to_string(), mode_name.to_string()),
+        (
+            "DOST_PROGRESS_FILE".to_string(),
+            plugin_dir
+                .join("progress.jsonl")
+                .to_string_lossy()
+                .to_string(),
+        ),
         ("ANSIBLE_NOCOLOR".to_string(), "1".to_string()),
     ];
     RunPlan {
@@ -177,6 +215,11 @@ pub async fn run(
         None => None,
     };
 
+    // Created before the child starts: a script may append to it at once.
+    if let Some((_, p)) = plan.env.iter().find(|(k, _)| k == "DOST_PROGRESS_FILE") {
+        let _ = File::create(p);
+    }
+
     let mut command = tokio::process::Command::new(&argv[0]);
     command
         .args(&argv[1..])
@@ -197,6 +240,19 @@ pub async fn run(
     }
     drop(pw_read);
     drop(become_pw);
+
+    let progress_stop = Arc::new(std::sync::atomic::AtomicBool::new(false));
+    let progress_task = plan
+        .env
+        .iter()
+        .find(|(k, _)| k == "DOST_PROGRESS_FILE")
+        .map(|(_, p)| {
+            tokio::spawn(tail_progress(
+                PathBuf::from(p),
+                tx.clone(),
+                progress_stop.clone(),
+            ))
+        });
 
     let pid = child.id().map(|p| Pid::from_raw(p as i32));
     let tail = Arc::new(Mutex::new(VecDeque::new()));
@@ -240,6 +296,10 @@ pub async fn run(
     };
     let _ = out_task.await;
     let _ = err_task.await;
+    progress_stop.store(true, std::sync::atomic::Ordering::SeqCst);
+    if let Some(t) = progress_task {
+        let _ = t.await;
+    }
 
     let output_tail = tail
         .lock()
