@@ -7,15 +7,15 @@
 
 ## Build and check
 ```bash
-cargo build --release
-./target/release/dost doctor
+./install.sh        # puts `dost` into ~/.local/bin (PREFIX=... to change)
+dost doctor
 ```
 `doctor` reports the Ansible version, whether the bundled callback loads, and (inside a
 project) every problem in your catalog with file and field.
 
 ## See the scenes
 ```bash
-./target/release/dost demo
+dost demo
 ```
 Keys: `↑↓` choose, `Enter` open or confirm, `Tab` switch scene / log / raw output,
 `q` or `Esc` cancel or go back.

@@ -41,14 +41,18 @@ build. Not published to crates.io yet.
 ```bash
 git clone https://github.com/alfinkly/dost
 cd dost
-cargo build --release
-./target/release/dost doctor
+./install.sh        # builds a release and puts `dost` into ~/.local/bin
+dost doctor
 ```
+
+`PREFIX=/usr/local ./install.sh` installs elsewhere, `./install.sh --uninstall` removes it. The
+script touches nothing but `PREFIX/bin/dost` (no shell config, no aliases); if that directory is
+not in your `PATH` it prints the line to add.
 
 ## Try it without any servers
 
 ```bash
-./target/release/dost demo
+dost demo
 ```
 
 The demo plays bundled playbooks against `localhost`; nothing is changed.
