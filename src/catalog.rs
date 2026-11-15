@@ -105,6 +105,14 @@ pub enum CatalogError {
     Many(Vec<Problem>),
 }
 
+impl CatalogError {
+    pub fn problems(&self) -> &[Problem] {
+        match self {
+            CatalogError::Many(p) => p,
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct RawCommand {
     id: String,

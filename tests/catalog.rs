@@ -1,4 +1,4 @@
-use dost::catalog::{find_root, load_project, CatalogError, Danger};
+use dost::catalog::{find_root, load_project, Danger};
 use std::fs;
 use std::path::Path;
 use tempfile::TempDir;
@@ -56,9 +56,7 @@ fn unknown_after_id_is_error() {
         (".dost/catalog/perimeter.yml", PERIMETER),
     ]);
     let err = load_project(dir.path()).unwrap_err();
-    let CatalogError::Many(problems) = err else {
-        panic!("expected Many")
-    };
+    let problems = err.problems().to_vec();
     assert!(problems
         .iter()
         .any(|p| p.field == "after" && p.file.ends_with("perimeter.yml")));
@@ -67,9 +65,7 @@ fn unknown_after_id_is_error() {
 #[test]
 fn missing_playbook_file_is_error() {
     let dir = project(&[(".dost/catalog/base.yml", BASE)]);
-    let CatalogError::Many(problems) = load_project(dir.path()).unwrap_err() else {
-        panic!("expected Many")
-    };
+    let problems = load_project(dir.path()).unwrap_err().problems().to_vec();
     assert!(problems.iter().any(|p| p.field == "playbook"));
 }
 
@@ -83,9 +79,7 @@ fn chain_with_unknown_step_is_error() {
             "id: c\ntitle: C\nsteps: [base, nope]\n",
         ),
     ]);
-    let CatalogError::Many(problems) = load_project(dir.path()).unwrap_err() else {
-        panic!("expected Many")
-    };
+    let problems = load_project(dir.path()).unwrap_err().problems().to_vec();
     assert!(problems.iter().any(|p| p.field == "steps"));
 }
 
@@ -99,9 +93,7 @@ fn invalid_error_regex_is_error() {
             "- match: \"(unclosed\"\n  cause: x\n  fix: y\n",
         ),
     ]);
-    let CatalogError::Many(problems) = load_project(dir.path()).unwrap_err() else {
-        panic!("expected Many")
-    };
+    let problems = load_project(dir.path()).unwrap_err().problems().to_vec();
     assert!(problems.iter().any(|p| p.field == "match"));
 }
 
@@ -114,9 +106,7 @@ fn reports_all_problems_not_just_the_first() {
             "- match: \"(unclosed\"\n  cause: x\n  fix: y\n",
         ),
     ]);
-    let CatalogError::Many(problems) = load_project(dir.path()).unwrap_err() else {
-        panic!("expected Many")
-    };
+    let problems = load_project(dir.path()).unwrap_err().problems().to_vec();
     assert!(problems.len() >= 2);
 }
 
