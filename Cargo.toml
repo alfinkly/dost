@@ -1,0 +1,14 @@
+[package]
+name = "dost"
+version = "0.1.0"
+edition = "2021"
+description = "Terminal player for Ansible: menu, live scenes, plain-language summaries"
+license = "Apache-2.0"
+repository = "https://github.com/alfinkly/dost"
+rust-version = "1.80"
+
+[dependencies]
+anyhow = "1"
+clap = { version = "4", features = ["derive"] }
+semver = "1"
+thiserror = "1"
