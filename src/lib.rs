@@ -1,7 +1,9 @@
+pub mod app;
 pub mod catalog;
 pub mod cli;
 pub mod doctor;
 pub mod hints;
+pub mod plain;
 pub mod runner;
 pub mod scenes;
 pub mod secret;

@@ -11,9 +11,23 @@ pub struct Cli {
 #[derive(Subcommand, Debug)]
 pub enum Cmd {
     /// Run one catalog command by id
-    Run { id: String },
-    /// Run a chain of commands by id
-    Chain { id: String },
+    Run {
+        id: String,
+        /// Without a terminal: apply after a passed check (a check always runs first)
+        #[arg(long)]
+        apply: bool,
+        /// Without a terminal: the command id, required to apply a `danger: high` command
+        #[arg(long)]
+        confirm: Option<String>,
+    },
+    /// Run the next unfinished step of a chain
+    Chain {
+        id: String,
+        #[arg(long)]
+        apply: bool,
+        #[arg(long)]
+        confirm: Option<String>,
+    },
     /// Show progress of a chain
     Status { chain: String },
     /// Show past runs

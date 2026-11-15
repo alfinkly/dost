@@ -2,6 +2,7 @@
 
 use zeroize::Zeroizing;
 
+#[derive(Clone)]
 pub struct BecomePassword(Zeroizing<Vec<u8>>);
 
 impl BecomePassword {
