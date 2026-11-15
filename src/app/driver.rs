@@ -16,6 +16,7 @@ use tokio::sync::mpsc;
 use tokio_util::sync::CancellationToken;
 
 use super::{Action, App};
+use crate::assistant::{apply_patch, ask, load_config, revert_patch, Advice};
 use crate::catalog::Project;
 use crate::runner::{build_plan, run as run_ansible, RunOutcome};
 use crate::store::Store;
@@ -68,6 +69,9 @@ pub async fn run(project: Project, store: Store, start: Option<&str>) -> Result<
     let mut events = EventStream::new();
     let mut tick = tokio::time::interval(Duration::from_millis(100));
     let mut cancel = CancellationToken::new();
+    let assistant_cfg = load_config(&app.project.root);
+    let (help_tx, mut help_rx) = mpsc::channel::<Result<Advice, String>>(1);
+    let mut help_cancel = CancellationToken::new();
     let quit_signal = CancellationToken::new();
     crate::signals::cancel_on_signals(quit_signal.clone());
 
@@ -97,10 +101,34 @@ pub async fn run(project: Project, store: Store, start: Option<&str>) -> Result<
                             let _ = done_tx.send(r).await;
                         });
                     }
+                    Action::AskHelp { prompt } => {
+                        help_cancel = CancellationToken::new();
+                        let (cfg, root, tx, token) = (
+                            assistant_cfg.clone(),
+                            app.project.root.clone(),
+                            help_tx.clone(),
+                            help_cancel.clone(),
+                        );
+                        tokio::spawn(async move {
+                            let r = ask(&cfg, &prompt, &root, token).await.map_err(|e| e.to_string());
+                            let _ = tx.send(r).await;
+                        });
+                    }
+                    Action::CancelHelp => help_cancel.cancel(),
+                    Action::ApplyPatch { diff } => {
+                        let r = apply_patch(&app.project.root, &diff);
+                        app.on_patch_result(r);
+                    }
+                    Action::RevertPatch { diff } => {
+                        let r = revert_patch(&app.project.root, &diff);
+                        app.on_patch_reverted(r);
+                    }
+                    Action::Copy { text } => app.on_copied(copy_to_clipboard(&text)),
                     Action::None => {}
                 }
             }
             Some(line) = rx.recv() => app.on_stream(line),
+            Some(advice) = help_rx.recv() => app.on_advice(advice),
             Some(res) = done_rx.recv() => {
                 while let Ok(l) = rx.try_recv() {
                     app.on_stream(l);
@@ -120,5 +148,30 @@ pub async fn run(project: Project, store: Store, start: Option<&str>) -> Result<
         }
     }
     cancel.cancel();
+    help_cancel.cancel();
     Ok(())
+}
+
+/// Put text on the clipboard with whatever the system has (pbcopy, wl-copy, xclip).
+fn copy_to_clipboard(text: &str) -> Result<(), String> {
+    use std::io::Write;
+    use std::process::{Command, Stdio};
+    let candidates: [(&str, &[&str]); 3] = [
+        ("pbcopy", &[]),
+        ("wl-copy", &[]),
+        ("xclip", &["-selection", "clipboard"]),
+    ];
+    for (prog, args) in candidates {
+        let Ok(mut child) = Command::new(prog).args(args).stdin(Stdio::piped()).spawn() else {
+            continue;
+        };
+        if let Some(mut stdin) = child.stdin.take() {
+            let _ = stdin.write_all(text.as_bytes());
+        }
+        return match child.wait() {
+            Ok(s) if s.success() => Ok(()),
+            _ => Err(format!("{prog} failed")),
+        };
+    }
+    Err("no clipboard tool found (pbcopy, wl-copy or xclip)".into())
 }

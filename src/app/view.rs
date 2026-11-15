@@ -5,6 +5,7 @@ use ratatui::widgets::{Paragraph, Wrap};
 use ratatui::Frame;
 
 use super::{App, ScreenKind, Tab};
+use crate::assistant::Proposal;
 use crate::runner::{build_plan, display_command};
 use crate::stream::RunMode;
 use crate::summary::summary_for;
@@ -47,28 +48,49 @@ pub fn draw(app: &App, f: &mut Frame) {
         ])),
         head,
     );
-    let footer = match app.screen {
-        ScreenKind::Menu => "↑↓ choose · Enter open · q quit",
-        ScreenKind::Preflight => "Enter run check · Esc back",
-        ScreenKind::Password => "Enter confirm · Esc cancel",
-        ScreenKind::Running => "Tab switch view · q cancel",
-        ScreenKind::ApplyConfirm => "Enter apply · Esc cancel",
-        ScreenKind::CheckFailed => {
-            if app.command().needs_become {
-                "r retry · p retry with a new password · a apply anyway · Enter back"
-            } else {
-                "r retry · a apply anyway · Enter back"
-            }
+    let failure_keys = |base: &str| -> String {
+        let mut k = vec!["r retry".to_string()];
+        if app.command().needs_become {
+            k.push("p retry with a new password".into());
         }
+        k.push("h ask Claude".into());
+        if app.can_undo() {
+            k.push("u undo patch".into());
+        }
+        if !base.is_empty() {
+            k.push(base.into());
+        }
+        k.join(" · ")
+    };
+    let footer: String = match app.screen {
+        ScreenKind::Menu => "↑↓ choose · Enter open · q quit".into(),
+        ScreenKind::Preflight => "Enter run check · Esc back".into(),
+        ScreenKind::Password => "Enter confirm · Esc cancel".into(),
+        ScreenKind::Running => "Tab switch view · q cancel".into(),
+        ScreenKind::ApplyConfirm => "Enter apply · Esc cancel".into(),
+        ScreenKind::CheckFailed => format!("{} · a apply anyway · Enter back", failure_keys("")),
         ScreenKind::Result => {
             if !app.run_failed() {
-                "Enter back to menu"
-            } else if app.command().needs_become {
-                "r retry · p retry with a new password · Enter back"
+                if app.can_undo() {
+                    "u undo patch · Enter back to menu".into()
+                } else {
+                    "Enter back to menu".into()
+                }
             } else {
-                "r retry · Enter back"
+                format!("{} · Enter back", failure_keys(""))
             }
         }
+        ScreenKind::HelpConfirm => "y send · Esc cancel".into(),
+        ScreenKind::HelpAsking => "Esc cancel".into(),
+        ScreenKind::HelpAdvice => "↑↓ choose · Enter open · 1-9 open · Esc back".into(),
+        ScreenKind::HelpDetail => match app
+            .advice
+            .as_ref()
+            .and_then(|a| a.proposals.get(app.adv_sel))
+        {
+            Some(Proposal::Patch { .. }) => "a apply the patch · Esc back".into(),
+            _ => "↑↓ choose a step · Enter open the command in dost · c copy · Esc back".into(),
+        },
     };
     f.render_widget(Paragraph::new(footer).style(dim()), foot);
     match app.screen {
@@ -79,6 +101,10 @@ pub fn draw(app: &App, f: &mut Frame) {
         ScreenKind::ApplyConfirm => apply_confirm(app, f, body),
         ScreenKind::CheckFailed => check_failed(app, f, body),
         ScreenKind::Result => result(app, f, body),
+        ScreenKind::HelpConfirm => help_confirm(app, f, body),
+        ScreenKind::HelpAsking => help_asking(app, f, body),
+        ScreenKind::HelpAdvice => help_advice(app, f, body),
+        ScreenKind::HelpDetail => help_detail(app, f, body),
     }
 }
 
@@ -350,6 +376,141 @@ fn result(app: &App, f: &mut Frame, area: Rect) {
         }
         lines.push(Line::raw(""));
         lines.extend(failure_lines(app));
+    }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+fn help_confirm(app: &App, f: &mut Frame, area: Rect) {
+    let mut lines = vec![
+        Line::styled("Ask Claude for help?", bold()),
+        Line::raw(
+            "A headless, read-only `claude -p` request. It may read files of this project; it cannot run commands or change anything.",
+        ),
+        Line::raw("Sent: the failure below, the playbook path and the catalog command ids (secret-looking values are hidden)."),
+        Line::raw(""),
+    ];
+    let shown = app
+        .help_prompt
+        .lines()
+        .skip_while(|l| !l.starts_with("Failed command:"))
+        .take(area.height.saturating_sub(6) as usize)
+        .map(|l| Line::styled(l.to_string(), dim()));
+    lines.extend(shown);
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+fn help_asking(app: &App, f: &mut Frame, area: Rect) {
+    let spin = crate::widgets::NodeStatus::Running.glyph_at(app.state.frame);
+    f.render_widget(
+        Paragraph::new(vec![
+            Line::styled(
+                format!("{spin} Claude is looking at the playbook and the failure…"),
+                bold(),
+            ),
+            Line::raw(""),
+            Line::styled("Esc cancels the request.", dim()),
+        ]),
+        area,
+    );
+}
+
+fn help_advice(app: &App, f: &mut Frame, area: Rect) {
+    let Some(a) = &app.advice else { return };
+    let mut lines = vec![
+        Line::styled(a.summary.clone(), bold()),
+        Line::raw(format!("Cause: {}", a.cause)),
+        Line::raw(""),
+    ];
+    for (i, p) in a.proposals.iter().enumerate() {
+        let tag = match p {
+            Proposal::Patch { .. } => "patch",
+            Proposal::Steps { .. } => "steps",
+        };
+        let marker = if i == app.adv_sel { "▸" } else { " " };
+        let style = if i == app.adv_sel {
+            bold()
+        } else {
+            Style::default()
+        };
+        lines.push(Line::styled(
+            format!("{marker} {}. [{tag}] {}", i + 1, p.title()),
+            style,
+        ));
+    }
+    if let Some(m) = &app.message {
+        lines.push(Line::raw(""));
+        lines.push(Line::raw(m.clone()));
+    }
+    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+}
+
+fn help_detail(app: &App, f: &mut Frame, area: Rect) {
+    let Some(p) = app
+        .advice
+        .as_ref()
+        .and_then(|a| a.proposals.get(app.adv_sel))
+    else {
+        return;
+    };
+    let mut lines: Vec<Line> = Vec::new();
+    match p {
+        Proposal::Patch {
+            title,
+            explanation,
+            diff,
+        } => {
+            lines.push(Line::styled(title.clone(), bold()));
+            if !explanation.is_empty() {
+                lines.push(Line::raw(explanation.clone()));
+            }
+            lines.push(Line::raw(""));
+            for l in diff.lines().take(area.height.saturating_sub(6) as usize) {
+                let style = if l.starts_with('+') && !l.starts_with("+++") {
+                    Style::default().fg(ratatui::style::Color::Green)
+                } else if l.starts_with('-') && !l.starts_with("---") {
+                    Style::default().fg(ratatui::style::Color::Red)
+                } else {
+                    dim()
+                };
+                lines.push(Line::styled(l.to_string(), style));
+            }
+        }
+        Proposal::Steps {
+            title,
+            explanation,
+            steps,
+        } => {
+            lines.push(Line::styled(title.clone(), bold()));
+            if !explanation.is_empty() {
+                lines.push(Line::raw(explanation.clone()));
+            }
+            lines.push(Line::raw(""));
+            for (i, s) in steps.iter().enumerate() {
+                let marker = if i == app.step_sel { "▸" } else { " " };
+                let style = if i == app.step_sel {
+                    bold()
+                } else {
+                    Style::default()
+                };
+                lines.push(Line::styled(
+                    format!("{marker} {}. {}", i + 1, s.text),
+                    style,
+                ));
+                if let Some(id) = &s.run {
+                    lines.push(Line::styled(
+                        format!("      Enter opens `{id}` in dost"),
+                        dim(),
+                    ));
+                }
+                if let Some(c) = &s.command {
+                    lines.push(Line::styled(format!("      $ {c}    (c copies)"), dim()));
+                }
+            }
+        }
+    }
+    if let Some(m) = &app.message {
+        lines.push(Line::raw(""));
+        lines.push(Line::styled(m.clone(), bold()));
     }
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }

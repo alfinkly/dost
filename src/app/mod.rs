@@ -9,6 +9,7 @@ use std::collections::BTreeMap;
 use crossterm::event::{KeyCode, KeyEvent, KeyModifiers};
 use ratatui::Frame;
 
+use crate::assistant::{build_prompt, Advice, HelpContext, Proposal};
 use crate::catalog::{Danger, Project};
 use crate::hints::hints_for;
 use crate::runner::RunOutcome;
@@ -23,8 +24,26 @@ pub use driver::run;
 pub enum Action {
     None,
     Quit,
-    Start { command: usize, mode: RunMode },
+    Start {
+        command: usize,
+        mode: RunMode,
+    },
     Cancel,
+    /// Send this prompt to the headless assistant.
+    AskHelp {
+        prompt: String,
+    },
+    CancelHelp,
+    ApplyPatch {
+        diff: String,
+    },
+    RevertPatch {
+        diff: String,
+    },
+    /// Put this text on the clipboard.
+    Copy {
+        text: String,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,6 +55,10 @@ pub enum ScreenKind {
     ApplyConfirm,
     CheckFailed,
     Result,
+    HelpConfirm,
+    HelpAsking,
+    HelpAdvice,
+    HelpDetail,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -74,6 +97,14 @@ pub struct App {
     pub(crate) error: Option<String>,
     pub(crate) message: Option<String>,
     pub(crate) next_step: Option<String>,
+    help_return: ScreenKind,
+    help_consent: bool,
+    pub(crate) help_prompt: String,
+    pub(crate) advice: Option<Advice>,
+    pub(crate) adv_sel: usize,
+    pub(crate) step_sel: usize,
+    pending_patch: Option<String>,
+    last_patch: Option<String>,
 }
 
 impl App {
@@ -110,6 +141,14 @@ impl App {
             error: None,
             message: scene_problem,
             next_step: None,
+            help_return: ScreenKind::Menu,
+            help_consent: false,
+            help_prompt: String::new(),
+            advice: None,
+            adv_sel: 0,
+            step_sel: 0,
+            pending_patch: None,
+            last_patch: None,
         }
     }
 
@@ -208,6 +247,193 @@ impl App {
     }
 
     /// The last run ended without success (a failed task, a red link, a non-zero exit or an error).
+    pub(crate) fn can_undo(&self) -> bool {
+        self.last_patch.is_some()
+    }
+
+    fn help_context(&self) -> HelpContext {
+        let mut failures: Vec<String> = self
+            .state
+            .results
+            .iter()
+            .filter(|r| r.failed || r.unreachable)
+            .map(|r| match &r.msg {
+                Some(m) => format!("✗ {}: {}: {m}", r.host, r.task),
+                None => format!("✗ {}: {}", r.host, r.task),
+            })
+            .collect();
+        failures.extend(
+            self.state
+                .event_failures()
+                .into_iter()
+                .map(|f| format!("✗ {}: {}", f.key, f.detail)),
+        );
+        HelpContext {
+            command_id: self.command().id.clone(),
+            title: self.command().title.clone(),
+            about: self.command().about.clone(),
+            playbook: self.command().playbook.clone(),
+            mode: self.running_mode,
+            failures,
+            output_tail: self.last_tail.clone(),
+            catalog_ids: self.project.commands.iter().map(|c| c.id.clone()).collect(),
+        }
+    }
+
+    fn start_help(&mut self) -> Action {
+        self.help_return = self.screen;
+        self.help_prompt = build_prompt(&self.help_context());
+        if self.help_consent {
+            self.send_help()
+        } else {
+            self.screen = ScreenKind::HelpConfirm;
+            Action::None
+        }
+    }
+
+    fn send_help(&mut self) -> Action {
+        self.screen = ScreenKind::HelpAsking;
+        self.message = None;
+        Action::AskHelp {
+            prompt: self.help_prompt.clone(),
+        }
+    }
+
+    fn undo_patch(&mut self) -> Action {
+        match self.last_patch.clone() {
+            Some(diff) => Action::RevertPatch { diff },
+            None => Action::None,
+        }
+    }
+
+    pub fn on_advice(&mut self, result: Result<Advice, String>) {
+        match result {
+            Ok(a) if !a.proposals.is_empty() => {
+                self.advice = Some(a);
+                self.adv_sel = 0;
+                self.step_sel = 0;
+                self.screen = ScreenKind::HelpAdvice;
+            }
+            Ok(a) => {
+                self.screen = self.help_return;
+                self.message = Some(format!(
+                    "Claude had no concrete proposal. Cause: {}",
+                    a.cause
+                ));
+            }
+            Err(e) => {
+                self.screen = self.help_return;
+                self.message = Some(format!("Ask Claude: {e}"));
+            }
+        }
+    }
+
+    pub fn on_patch_result(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.last_patch = self.pending_patch.take();
+                self.screen = self.help_return;
+                self.message = Some("Patch applied. r retry · u undo the patch.".into());
+            }
+            Err(e) => {
+                self.pending_patch = None;
+                self.message = Some(format!("Patch not applied: {e}"));
+            }
+        }
+    }
+
+    pub fn on_patch_reverted(&mut self, result: Result<(), String>) {
+        match result {
+            Ok(()) => {
+                self.last_patch = None;
+                self.message = Some("Patch undone.".into());
+            }
+            Err(e) => self.message = Some(format!("Could not undo the patch: {e}")),
+        }
+    }
+
+    pub fn on_copied(&mut self, result: Result<(), String>) {
+        self.message = Some(match result {
+            Ok(()) => "Copied to the clipboard.".into(),
+            Err(e) => format!("Could not copy: {e}"),
+        });
+    }
+
+    fn key_help_advice(&mut self, key: KeyEvent, ctrl_c: bool) -> Action {
+        let n = self.advice.as_ref().map(|a| a.proposals.len()).unwrap_or(0);
+        match key.code {
+            KeyCode::Esc | KeyCode::Char('q') => self.screen = self.help_return,
+            _ if ctrl_c => self.screen = self.help_return,
+            KeyCode::Down | KeyCode::Char('j') if self.adv_sel + 1 < n => self.adv_sel += 1,
+            KeyCode::Up | KeyCode::Char('k') => self.adv_sel = self.adv_sel.saturating_sub(1),
+            KeyCode::Char(c @ '1'..='9') if (c as usize - '1' as usize) < n => {
+                self.adv_sel = c as usize - '1' as usize;
+                self.step_sel = 0;
+                self.screen = ScreenKind::HelpDetail;
+            }
+            KeyCode::Enter if n > 0 => {
+                self.step_sel = 0;
+                self.screen = ScreenKind::HelpDetail;
+            }
+            _ => {}
+        }
+        Action::None
+    }
+
+    fn key_help_detail(&mut self, key: KeyEvent, ctrl_c: bool) -> Action {
+        let Some(proposal) = self
+            .advice
+            .as_ref()
+            .and_then(|a| a.proposals.get(self.adv_sel))
+            .cloned()
+        else {
+            self.screen = ScreenKind::HelpAdvice;
+            return Action::None;
+        };
+        if matches!(key.code, KeyCode::Esc | KeyCode::Char('q')) || ctrl_c {
+            self.screen = ScreenKind::HelpAdvice;
+            return Action::None;
+        }
+        match proposal {
+            Proposal::Patch { diff, .. } => match key.code {
+                KeyCode::Char('a') => {
+                    self.pending_patch = Some(diff.clone());
+                    Action::ApplyPatch { diff }
+                }
+                _ => Action::None,
+            },
+            Proposal::Steps { steps, .. } => {
+                match key.code {
+                    KeyCode::Down | KeyCode::Char('j') if self.step_sel + 1 < steps.len() => {
+                        self.step_sel += 1;
+                    }
+                    KeyCode::Up | KeyCode::Char('k') => {
+                        self.step_sel = self.step_sel.saturating_sub(1);
+                    }
+                    KeyCode::Char('c') => {
+                        if let Some(text) = steps.get(self.step_sel).and_then(|s| s.command.clone())
+                        {
+                            return Action::Copy { text };
+                        }
+                    }
+                    KeyCode::Enter => {
+                        let run = steps.get(self.step_sel).and_then(|s| s.run.clone());
+                        if let Some(idx) =
+                            run.and_then(|id| self.project.commands.iter().position(|c| c.id == id))
+                        {
+                            self.password = None;
+                            self.open_command(idx);
+                        } else {
+                            self.message = Some("This step has no command dost can open.".into());
+                        }
+                    }
+                    _ => {}
+                }
+                Action::None
+            }
+        }
+    }
+
     pub(crate) fn run_failed(&self) -> bool {
         self.error.is_some() || self.last_exit != Some(0) || self.state.any_failed()
     }
@@ -325,7 +551,31 @@ impl App {
                 _ => Action::None,
             },
             ScreenKind::ApplyConfirm => self.key_apply_confirm(key, ctrl_c),
+            ScreenKind::HelpConfirm => match key.code {
+                KeyCode::Char('y') | KeyCode::Enter => {
+                    self.help_consent = true;
+                    self.send_help()
+                }
+                KeyCode::Esc | KeyCode::Char('n') | KeyCode::Char('q') => {
+                    self.screen = self.help_return;
+                    Action::None
+                }
+                _ if ctrl_c => {
+                    self.screen = self.help_return;
+                    Action::None
+                }
+                _ => Action::None,
+            },
+            ScreenKind::HelpAsking => match key.code {
+                KeyCode::Esc | KeyCode::Char('q') => Action::CancelHelp,
+                _ if ctrl_c => Action::CancelHelp,
+                _ => Action::None,
+            },
+            ScreenKind::HelpAdvice => self.key_help_advice(key, ctrl_c),
+            ScreenKind::HelpDetail => self.key_help_detail(key, ctrl_c),
             ScreenKind::CheckFailed => match key.code {
+                KeyCode::Char('h') => self.start_help(),
+                KeyCode::Char('u') => self.undo_patch(),
                 KeyCode::Char('r') => self.retry(RunMode::Check),
                 KeyCode::Char('p') => self.retry_with_new_password(RunMode::Check),
                 KeyCode::Char('a') => {
@@ -346,6 +596,8 @@ impl App {
                 _ => Action::None,
             },
             ScreenKind::Result => match key.code {
+                KeyCode::Char('h') if self.run_failed() => self.start_help(),
+                KeyCode::Char('u') => self.undo_patch(),
                 KeyCode::Char('r') if self.run_failed() => self.retry(RunMode::Apply),
                 KeyCode::Char('p') if self.run_failed() => {
                     self.retry_with_new_password(RunMode::Apply)

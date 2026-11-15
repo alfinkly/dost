@@ -57,3 +57,31 @@ Keys on the failure screens: `r` retries the same step (a check or an apply), `p
 the sudo password again. If sudo says the password is wrong or missing, `dost` forgets that password
 at once, so `r` already asks for a new one. A failed apply can be retried without typing the id again.
 Passwords with spaces at either end are refused (Ansible would strip them).
+
+## Ask Claude (headless help)
+
+On a failure screen press `h`. `dost` shows exactly what would be sent (the failure lines, the last output
+lines, the playbook path and the catalog command ids; values that look like passwords, tokens or keys
+are hidden) and asks once per session; `y` sends it.
+
+It runs `claude -p` in the project directory, **read-only**: the tools are limited to Read, Grep and Glob,
+nothing can be run or edited, there is a small budget cap and the session is not saved. The answer is
+structured: a summary, the likely cause and up to three proposals:
+
+- **patch**: a unified diff against files of this project. `a` applies it (it is validated first: only
+  files inside the project, no deletes, no `.git`; it must apply cleanly or nothing changes). Then `r`
+  retries the run, `u` undoes the patch.
+- **steps**: numbered steps. `Enter` on a step that names a catalog command opens that command in
+  `dost`; `c` copies a step's command (an `ansible-playbook` line or a read-only check) to the clipboard.
+  `dost` never runs arbitrary shell from an answer: servers change only through Ansible.
+
+Optional `.dost/config.yml`:
+```yaml
+assistant:
+  command: claude          # path of the Claude Code CLI
+  model: sonnet            # optional
+  tools: [Read, Grep, Glob]
+  max_budget_usd: 0.5
+  timeout_secs: 180
+```
+It needs the Claude Code CLI signed in (run `claude` once in a terminal). If it is not, `dost` says so.

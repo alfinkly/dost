@@ -254,3 +254,28 @@ fn config_defaults_are_read_only_and_cheap() {
     );
     assert!(c.max_budget_usd <= 1.0 && c.timeout_secs >= 60);
 }
+
+#[test]
+fn config_is_read_from_dot_dost_config_yml_and_falls_back_to_defaults() {
+    use dost::assistant::load_config;
+    let d = TempDir::new().unwrap();
+    assert_eq!(load_config(d.path()).command, "claude");
+    std::fs::create_dir_all(d.path().join(".dost")).unwrap();
+    std::fs::write(
+        d.path().join(".dost/config.yml"),
+        "assistant:\n  command: /opt/claude\n  model: sonnet\n  tools: [Read]\n  max_budget_usd: 0.2\n  timeout_secs: 90\n",
+    )
+    .unwrap();
+    let c = load_config(d.path());
+    assert_eq!(
+        (c.command.as_str(), c.model.as_deref(), c.timeout_secs),
+        ("/opt/claude", Some("sonnet"), 90)
+    );
+    assert_eq!(c.tools, vec!["Read".to_string()]);
+    std::fs::write(d.path().join(".dost/config.yml"), "assistant: [broken").unwrap();
+    assert_eq!(
+        load_config(d.path()).command,
+        "claude",
+        "a broken file falls back to the defaults"
+    );
+}

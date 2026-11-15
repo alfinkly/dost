@@ -25,6 +25,8 @@ your playbooks and shows it when you need it.
 - **Plain-language summary** after the run, written by you in the catalog (`done:`).
 - **Known errors** get their cause and fix shown on the spot.
 - **Chains** of playbooks remember progress: "3 of 6 done".
+- **Retry and help.** `r` retries a failed step, `p` retries with a new sudo password, `h` asks Claude (headless,
+  read-only) for a patch or steps, and `a`/`Enter`/`c` use the answer.
 - **Safe by construction.** The sudo password is typed into a masked field and handed to
   Ansible through an anonymous pipe: never in argv, environment, files, history or logs.
 

@@ -691,3 +691,188 @@ fn missing_sudo_password_message_is_also_recognised() {
     app.on_finished(ok(2));
     assert!(app.password().is_none());
 }
+
+use dost::assistant::{Advice, Proposal, Step};
+
+fn advice() -> Advice {
+    Advice {
+        summary: "The tunnel cannot bind its ports".into(),
+        cause: "Another unit holds 8000-8004".into(),
+        proposals: vec![
+            Proposal::Patch {
+                title: "Free the ports in the role".into(),
+                explanation: "Stop the old unit first".into(),
+                diff: "--- a/playbooks/p.yml\n+++ b/playbooks/p.yml\n@@ -1 +1 @@\n-old line\n+new line\n".into(),
+            },
+            Proposal::Steps {
+                title: "Check the other tunnel".into(),
+                explanation: String::new(),
+                steps: vec![
+                    Step { text: "Open the perimeter command".into(), run: Some("perimeter".into()), command: None },
+                    Step { text: "Read the journal".into(), run: None, command: Some("ansible-playbook playbooks/x.yml --check".into()) },
+                ],
+            },
+        ],
+    }
+}
+
+/// base command: check fails with "boom 8003" and a secret-looking line.
+fn failed_check_app(fx: &Fixture) -> App {
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(failing("boom 8003 token=SUPERSECRET"));
+    app.on_finished(ok(2));
+    assert_eq!(app.screen_kind(), ScreenKind::CheckFailed);
+    app
+}
+
+#[test]
+fn h_asks_for_consent_shows_what_is_sent_and_y_starts_the_request() {
+    let fx = Fixture::new();
+    let mut app = failed_check_app(&fx);
+    assert!(screen(&app).contains("h ask Claude"));
+    assert!(matches!(app.handle_key(key('h')), Action::None));
+    assert_eq!(app.screen_kind(), ScreenKind::HelpConfirm);
+    let t = screen(&app);
+    assert!(
+        t.contains("read-only") && t.contains("boom 8003"),
+        "the operator sees what leaves the machine:\n{t}"
+    );
+    assert!(!t.contains("SUPERSECRET"), "{t}");
+    match app.handle_key(key('y')) {
+        Action::AskHelp { prompt } => {
+            assert!(
+                prompt.contains("boom 8003") && prompt.contains("playbooks/base.yml"),
+                "{prompt}"
+            );
+            assert!(!prompt.contains("SUPERSECRET"));
+        }
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(app.screen_kind(), ScreenKind::HelpAsking);
+}
+
+#[test]
+fn consent_is_remembered_for_the_session_and_esc_cancels_the_request() {
+    let fx = Fixture::new();
+    let mut app = failed_check_app(&fx);
+    app.handle_key(key('h'));
+    app.handle_key(key('y'));
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Esc)),
+        Action::CancelHelp
+    ));
+    app.on_advice(Err("the request was cancelled".into()));
+    assert_eq!(app.screen_kind(), ScreenKind::CheckFailed);
+    assert!(
+        matches!(app.handle_key(key('h')), Action::AskHelp { .. }),
+        "no second confirmation"
+    );
+}
+
+#[test]
+fn a_patch_proposal_shows_the_diff_applies_on_a_and_can_be_undone_with_u() {
+    let fx = Fixture::new();
+    let mut app = failed_check_app(&fx);
+    app.handle_key(key('h'));
+    app.handle_key(key('y'));
+    app.on_advice(Ok(advice()));
+    assert_eq!(app.screen_kind(), ScreenKind::HelpAdvice);
+    let t = screen(&app);
+    assert!(
+        t.contains("Another unit holds 8000-8004")
+            && t.contains("Free the ports in the role")
+            && t.contains("Check the other tunnel"),
+        "{t}"
+    );
+    app.handle_key(code(KeyCode::Enter));
+    assert_eq!(app.screen_kind(), ScreenKind::HelpDetail);
+    let t = screen(&app);
+    assert!(t.contains("-old line") && t.contains("+new line"), "{t}");
+    let act = app.handle_key(key('a'));
+    let Action::ApplyPatch { diff } = act else {
+        panic!("{act:?}")
+    };
+    assert!(diff.contains("+new line"));
+    app.on_patch_result(Ok(()));
+    assert_eq!(app.screen_kind(), ScreenKind::CheckFailed);
+    let t = screen(&app);
+    assert!(t.contains("Patch applied") && t.contains("u undo"), "{t}");
+    assert!(matches!(
+        app.handle_key(key('u')),
+        Action::RevertPatch { .. }
+    ));
+    app.on_patch_reverted(Ok(()));
+    assert!(screen(&app).contains("undone"));
+    assert!(
+        matches!(app.handle_key(key('u')), Action::None),
+        "nothing left to undo"
+    );
+}
+
+#[test]
+fn a_patch_that_does_not_apply_keeps_the_detail_screen_and_says_why() {
+    let fx = Fixture::new();
+    let mut app = failed_check_app(&fx);
+    app.handle_key(key('h'));
+    app.handle_key(key('y'));
+    app.on_advice(Ok(advice()));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(key('a'));
+    app.on_patch_result(Err("patch does not apply".into()));
+    assert_eq!(app.screen_kind(), ScreenKind::HelpDetail);
+    assert!(screen(&app).contains("patch does not apply"));
+}
+
+#[test]
+fn steps_can_open_a_catalog_command_or_copy_a_command() {
+    let fx = Fixture::new();
+    let mut app = failed_check_app(&fx);
+    app.handle_key(key('h'));
+    app.handle_key(key('y'));
+    app.on_advice(Ok(advice()));
+    app.handle_key(code(KeyCode::Down)); // second proposal
+    app.handle_key(code(KeyCode::Enter));
+    assert_eq!(app.screen_kind(), ScreenKind::HelpDetail);
+    assert!(screen(&app).contains("Read the journal"));
+    app.handle_key(code(KeyCode::Down)); // second step: has a command to copy
+    match app.handle_key(key('c')) {
+        Action::Copy { text } => assert_eq!(text, "ansible-playbook playbooks/x.yml --check"),
+        other => panic!("{other:?}"),
+    }
+    app.handle_key(code(KeyCode::Up)); // first step: runs a catalog command
+    assert!(matches!(app.handle_key(code(KeyCode::Enter)), Action::None));
+    assert_eq!(app.screen_kind(), ScreenKind::Preflight);
+    assert!(screen(&app).contains("PERIMETER"), "{}", screen(&app));
+}
+
+#[test]
+fn a_failed_request_returns_to_the_failure_screen_with_the_reason() {
+    let fx = Fixture::new();
+    let mut app = failed_check_app(&fx);
+    app.handle_key(key('h'));
+    app.handle_key(key('y'));
+    app.on_advice(Err("Claude is not signed in: run `claude` once".into()));
+    assert_eq!(app.screen_kind(), ScreenKind::CheckFailed);
+    assert!(screen(&app).contains("not signed in"));
+}
+
+#[test]
+fn h_does_nothing_on_a_successful_result_and_is_offered_after_a_failed_apply() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(result("h", false, None));
+    app.on_finished(ok(0));
+    app.handle_key(code(KeyCode::Enter)); // apply
+    app.on_stream(failing("apply broke"));
+    app.on_finished(ok(2));
+    assert_eq!(app.screen_kind(), ScreenKind::Result);
+    assert!(screen(&app).contains("h ask Claude"));
+    assert!(matches!(app.handle_key(key('h')), Action::None));
+    assert_eq!(app.screen_kind(), ScreenKind::HelpConfirm);
+}

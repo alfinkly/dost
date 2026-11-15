@@ -427,3 +427,45 @@ pub async fn ask(
     }
     parse_envelope(&stdout)
 }
+
+#[derive(Deserialize, Default)]
+struct RawConfigFile {
+    #[serde(default)]
+    assistant: Option<RawAssistant>,
+}
+
+#[derive(Deserialize, Default)]
+struct RawAssistant {
+    command: Option<String>,
+    model: Option<String>,
+    tools: Option<Vec<String>>,
+    max_budget_usd: Option<f32>,
+    timeout_secs: Option<u64>,
+}
+
+/// `assistant:` from `.dost/config.yml`; a missing or broken file gives the defaults.
+pub fn load_config(root: &Path) -> AssistantConfig {
+    let mut cfg = AssistantConfig::default();
+    let Ok(text) = std::fs::read_to_string(root.join(".dost/config.yml")) else {
+        return cfg;
+    };
+    let Ok(file) = serde_yaml_ng::from_str::<RawConfigFile>(&text) else {
+        return cfg;
+    };
+    if let Some(a) = file.assistant {
+        if let Some(c) = a.command {
+            cfg.command = c;
+        }
+        cfg.model = a.model.or(cfg.model);
+        if let Some(t) = a.tools {
+            cfg.tools = t;
+        }
+        if let Some(b) = a.max_budget_usd {
+            cfg.max_budget_usd = b;
+        }
+        if let Some(t) = a.timeout_secs {
+            cfg.timeout_secs = t;
+        }
+    }
+    cfg
+}
