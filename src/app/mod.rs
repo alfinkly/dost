@@ -206,7 +206,7 @@ impl App {
         self.screen = ScreenKind::Preflight;
     }
 
-    fn to_menu(&mut self) {
+    fn back_to_menu(&mut self) {
         self.screen = ScreenKind::Menu;
         self.password = None;
         self.pw_input.clear();
@@ -261,11 +261,11 @@ impl App {
                     }
                 }
                 KeyCode::Esc => {
-                    self.to_menu();
+                    self.back_to_menu();
                     Action::None
                 }
                 _ if ctrl_c => {
-                    self.to_menu();
+                    self.back_to_menu();
                     Action::None
                 }
                 _ => Action::None,
@@ -294,22 +294,22 @@ impl App {
                     Action::None
                 }
                 KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
-                    self.to_menu();
+                    self.back_to_menu();
                     Action::None
                 }
                 _ if ctrl_c => {
-                    self.to_menu();
+                    self.back_to_menu();
                     Action::None
                 }
                 _ => Action::None,
             },
             ScreenKind::Result => match key.code {
                 KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
-                    self.to_menu();
+                    self.back_to_menu();
                     Action::None
                 }
                 _ if ctrl_c => {
-                    self.to_menu();
+                    self.back_to_menu();
                     Action::None
                 }
                 _ => Action::None,
@@ -361,12 +361,12 @@ impl App {
 
     fn key_password(&mut self, key: KeyEvent, ctrl_c: bool) -> Action {
         if ctrl_c {
-            self.to_menu();
+            self.back_to_menu();
             return Action::None;
         }
         match key.code {
             KeyCode::Esc => {
-                self.to_menu();
+                self.back_to_menu();
                 Action::None
             }
             KeyCode::Backspace => {
@@ -402,13 +402,13 @@ impl App {
 
     fn key_apply_confirm(&mut self, key: KeyEvent, ctrl_c: bool) -> Action {
         if ctrl_c {
-            self.to_menu();
+            self.back_to_menu();
             return Action::None;
         }
         let required = self.forced || self.command().danger != Danger::Low;
         match key.code {
             KeyCode::Esc => {
-                self.to_menu();
+                self.back_to_menu();
                 Action::None
             }
             KeyCode::Backspace => {
@@ -442,7 +442,7 @@ impl App {
 
     pub fn on_finished(&mut self, outcome: RunOutcome) {
         if outcome.cancelled {
-            self.to_menu();
+            self.back_to_menu();
             self.message = Some("Run cancelled.".into());
             return;
         }
