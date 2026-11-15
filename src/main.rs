@@ -1,7 +1,5 @@
-mod cli;
-mod doctor;
-
 use clap::Parser;
+use dost::{cli, doctor};
 
 fn main() {
     let cli = cli::Cli::parse();
