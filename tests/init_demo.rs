@@ -154,3 +154,21 @@ fn doctor_reports_command_pointing_at_unknown_scene() {
         "{problems:?}"
     );
 }
+
+#[test]
+fn doctor_reports_fill_in_placeholders() {
+    let d = TempDir::new().unwrap();
+    fs::create_dir_all(d.path().join(".dost/catalog")).unwrap();
+    fs::create_dir_all(d.path().join("playbooks")).unwrap();
+    fs::write(d.path().join("playbooks/p.yml"), "- hosts: all\n").unwrap();
+    fs::write(
+        d.path().join(".dost/catalog/p.yml"),
+        "id: p\ntitle: P\nplaybook: playbooks/p.yml\nextra_vars: [\"node_public_ip=FILL_IN_NODE_IP\"]\n",
+    )
+    .unwrap();
+    let problems = validate_project(d.path());
+    assert!(
+        problems.iter().any(|p| p.contains("FILL_IN")),
+        "{problems:?}"
+    );
+}

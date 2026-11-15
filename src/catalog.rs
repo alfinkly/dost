@@ -31,6 +31,8 @@ pub struct Command {
     pub limit: Option<String>,
     pub tags: Vec<String>,
     pub extra_vars: Vec<String>,
+    /// Extra vars added only to the apply run (e.g. a `confirm=yes` guard that a check must not get).
+    pub apply_extra_vars: Vec<String>,
     pub check: bool,
     pub watch: Vec<String>,
 }
@@ -138,6 +140,8 @@ struct RawCommand {
     tags: Vec<String>,
     #[serde(default)]
     extra_vars: Vec<String>,
+    #[serde(default)]
+    apply_extra_vars: Vec<String>,
     #[serde(default = "yes")]
     check: bool,
     #[serde(default)]
@@ -255,6 +259,7 @@ pub fn load_project(root: &Path) -> Result<Project, CatalogError> {
                     limit: raw.limit,
                     tags: raw.tags,
                     extra_vars: raw.extra_vars,
+                    apply_extra_vars: raw.apply_extra_vars,
                     check: raw.check,
                     watch: raw.watch,
                 },

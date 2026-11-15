@@ -22,6 +22,7 @@ fn cmd() -> Command {
         limit: None,
         tags: vec![],
         extra_vars: vec![],
+        apply_extra_vars: vec![],
         check: true,
         watch: vec![],
     }
@@ -210,4 +211,33 @@ fn only_passwords_without_edge_whitespace_are_safe_for_ansible() {
             "{bad:?}"
         );
     }
+}
+
+#[test]
+fn apply_only_vars_are_added_for_apply_and_not_for_check() {
+    let mut c = cmd();
+    c.extra_vars = vec!["always=1".into()];
+    c.apply_extra_vars = vec!["confirm=yes".into()];
+    let check = args(&build_plan(
+        Path::new("/p"),
+        &c,
+        RunMode::Check,
+        Path::new("/cb"),
+    ))
+    .join(" ");
+    let apply = args(&build_plan(
+        Path::new("/p"),
+        &c,
+        RunMode::Apply,
+        Path::new("/cb"),
+    ))
+    .join(" ");
+    assert!(
+        check.contains("always=1") && !check.contains("confirm=yes"),
+        "{check}"
+    );
+    assert!(
+        apply.contains("always=1") && apply.contains("confirm=yes"),
+        "{apply}"
+    );
 }

@@ -88,6 +88,11 @@ pub fn build_plan(root: &Path, cmd: &Command, mode: RunMode, plugin_dir: &Path) 
     for v in &cmd.extra_vars {
         argv.extend(["-e".into(), v.into()]);
     }
+    if mode == RunMode::Apply {
+        for v in &cmd.apply_extra_vars {
+            argv.extend(["-e".into(), v.into()]);
+        }
+    }
     let mode_name = match mode {
         RunMode::Check => "check",
         RunMode::Apply => "apply",

@@ -25,6 +25,7 @@ fn cmd(id: &str, about: &str, danger: Danger, become_: bool) -> Command {
         limit: None,
         tags: vec![],
         extra_vars: vec![],
+        apply_extra_vars: vec![],
         check: true,
         watch: vec![],
     }

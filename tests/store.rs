@@ -19,6 +19,7 @@ fn cmd(watch: Vec<&str>) -> Command {
         limit: None,
         tags: vec![],
         extra_vars: vec![],
+        apply_extra_vars: vec![],
         check: true,
         watch: watch.into_iter().map(String::from).collect(),
     }

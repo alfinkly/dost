@@ -76,6 +76,20 @@ pub fn validate_project(root: &Path) -> Vec<String> {
         }
     }
     for cmd in &project.commands {
+        let strings = cmd
+            .extra_vars
+            .iter()
+            .chain(cmd.apply_extra_vars.iter())
+            .chain(cmd.inventory.iter())
+            .chain(cmd.limit.iter());
+        for s in strings {
+            if s.contains("FILL_IN") {
+                out.push(format!(
+                    "command `{}`: `{s}` still contains a FILL_IN placeholder; set the real value in .dost/catalog",
+                    cmd.id
+                ));
+            }
+        }
         let file = root.join(&cmd.playbook);
         let Ok(text) = std::fs::read_to_string(&file) else {
             continue;
