@@ -1,0 +1,5 @@
+id: vpn
+use: map
+title: Links
+bind:
+  links: event.link[*]

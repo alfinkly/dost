@@ -3,6 +3,7 @@ pub mod cli;
 pub mod doctor;
 pub mod hints;
 pub mod runner;
+pub mod scenes;
 pub mod secret;
 pub mod store;
 pub mod stream;
