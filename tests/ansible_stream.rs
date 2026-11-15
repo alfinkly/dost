@@ -81,3 +81,88 @@ fn no_log_task_emits_no_event_and_check_mode_is_marked() {
     assert!(!st.events.keys().any(|(_, kind, _)| kind == "note"));
     assert!(st.recap.contains_key("localhost"));
 }
+
+#[test]
+fn plays_and_loop_items_arrive_with_labels() {
+    if !enabled() {
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let plugins = dir.path().join("cb");
+    std::fs::create_dir_all(&plugins).unwrap();
+    std::fs::write(plugins.join("dost_stream.py"), CALLBACK_PLUGIN).unwrap();
+    let pb = dir.path().join("pb.yml");
+    std::fs::write(
+        &pb,
+        r#"- name: First play
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Make accounts
+      ansible.builtin.command: "true"
+      changed_when: item == 'alice'
+      loop: [alice, bob]
+      loop_control: { label: "{{ item }}" }
+    - name: Plain task
+      ansible.builtin.command: "true"
+      changed_when: false
+- name: Second play
+  hosts: localhost
+  connection: local
+  gather_facts: false
+  tasks:
+    - name: Secret loop
+      no_log: true
+      ansible.builtin.command: "true"
+      loop: [x]
+"#,
+    )
+    .unwrap();
+    let out = Command::new("ansible-playbook")
+        .arg(&pb)
+        .env("ANSIBLE_CALLBACK_PLUGINS", &plugins)
+        .env("ANSIBLE_STDOUT_CALLBACK", "dost_stream")
+        .env("DOST_MODE", "apply")
+        .env("ANSIBLE_LOCALHOST_WARNING", "False")
+        .env("ANSIBLE_INVENTORY_UNPARSED_WARNING", "False")
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let mut st = RunState::default();
+    for line in String::from_utf8_lossy(&out.stdout).lines() {
+        if let Some(l) = parse_line(line) {
+            st.apply(l);
+        }
+    }
+    assert_eq!(
+        st.plays,
+        vec!["First play".to_string(), "Second play".to_string()]
+    );
+    let alice = st
+        .items
+        .iter()
+        .find(|i| i.item == "alice")
+        .expect("alice item");
+    assert!(alice.changed && alice.play == "First play" && alice.task == "Make accounts");
+    let bob = st.items.iter().find(|i| i.item == "bob").expect("bob item");
+    assert!(!bob.changed);
+    let secret = st
+        .items
+        .iter()
+        .find(|i| i.task == "Secret loop")
+        .expect("secret item");
+    assert!(secret.item.is_empty(), "no_log loop items carry no label");
+    assert_eq!(
+        st.results
+            .iter()
+            .find(|r| r.task == "Plain task")
+            .unwrap()
+            .play,
+        "First play"
+    );
+}

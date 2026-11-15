@@ -121,3 +121,42 @@ fn recap_marks_the_run_finished_and_run_start_keeps_display_settings() {
     });
     assert!(st.finished);
 }
+
+#[test]
+fn play_and_item_lines_parse_and_the_state_tracks_the_current_play() {
+    assert!(matches!(
+        parse_line(r#"{"t":"play","name":"Admin users"}"#),
+        Some(StreamLine::Play { name }) if name == "Admin users"
+    ));
+    let item = r#"{"t":"item","host":"h","task":"Admin accounts","item":"alice","changed":true,"failed":false,"skipped":false,"no_log":false}"#;
+    assert!(matches!(
+        parse_line(item),
+        Some(StreamLine::Item { host, item, changed: true, .. }) if host == "h" && item == "alice"
+    ));
+    let mut st = RunState::default();
+    st.apply(StreamLine::Play {
+        name: "Admin users".into(),
+    });
+    st.apply(parse_line(item).unwrap());
+    st.apply(StreamLine::TaskResult {
+        host: "h".into(),
+        task: "t".into(),
+        changed: false,
+        failed: false,
+        skipped: false,
+        unreachable: false,
+        module: None,
+        msg: None,
+        diff: None,
+    });
+    assert_eq!(st.current_play, "Admin users");
+    assert_eq!(st.items.len(), 1);
+    assert_eq!(st.items[0].play, "Admin users");
+    assert_eq!(st.results[0].play, "Admin users");
+}
+
+#[test]
+fn item_of_a_no_log_task_carries_no_label() {
+    let item = r#"{"t":"item","host":"h","task":"secret","item":null,"changed":true,"failed":false,"skipped":false,"no_log":true}"#;
+    assert!(matches!(parse_line(item), Some(StreamLine::Item { item, .. }) if item.is_empty()));
+}

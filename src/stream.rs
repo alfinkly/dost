@@ -22,6 +22,17 @@ pub enum StreamLine {
     RunStart {
         mode: RunMode,
     },
+    Play {
+        name: String,
+    },
+    Item {
+        host: String,
+        task: String,
+        item: String,
+        changed: bool,
+        failed: bool,
+        skipped: bool,
+    },
     TaskStart {
         name: String,
     },
@@ -80,6 +91,21 @@ pub fn parse_line(line: &str) -> Option<StreamLine> {
             };
             Some(StreamLine::RunStart { mode })
         }
+        "play" => Some(StreamLine::Play {
+            name: s(&v, "name")?,
+        }),
+        "item" => Some(StreamLine::Item {
+            host: s(&v, "host")?,
+            task: s(&v, "task")?,
+            item: if b(&v, "no_log") {
+                String::new()
+            } else {
+                s(&v, "item").unwrap_or_default()
+            },
+            changed: b(&v, "changed"),
+            failed: b(&v, "failed"),
+            skipped: b(&v, "skipped"),
+        }),
         "task" => Some(StreamLine::TaskStart {
             name: s(&v, "name")?,
         }),
@@ -129,6 +155,7 @@ pub struct Recap {
 
 #[derive(Debug, Clone)]
 pub struct TaskResultRec {
+    pub play: String,
     pub host: String,
     pub task: String,
     pub changed: bool,
@@ -138,6 +165,17 @@ pub struct TaskResultRec {
     pub module: Option<String>,
     pub msg: Option<String>,
     pub diff: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ItemRec {
+    pub play: String,
+    pub host: String,
+    pub task: String,
+    pub item: String,
+    pub changed: bool,
+    pub failed: bool,
+    pub skipped: bool,
 }
 
 /// Everything known about one run so far.
@@ -152,7 +190,12 @@ pub struct RunState {
     pub finished: bool,
     pub hosts: Vec<String>,
     pub tasks: Vec<String>,
+    /// Names of the plays seen so far, and the one running now.
+    pub plays: Vec<String>,
+    pub current_play: String,
     pub results: Vec<TaskResultRec>,
+    /// Results of single loop items (the label is the loop item).
+    pub items: Vec<ItemRec>,
     /// Keyed by (host, kind, key); same key overwrites, different keys accumulate.
     pub events: BTreeMap<(String, String, String), Value>,
     pub recap: BTreeMap<String, Recap>,
@@ -175,6 +218,29 @@ impl RunState {
                     ..RunState::default()
                 };
             }
+            StreamLine::Play { name } => {
+                self.current_play = name.clone();
+                self.plays.push(name);
+            }
+            StreamLine::Item {
+                host,
+                task,
+                item,
+                changed,
+                failed,
+                skipped,
+            } => {
+                self.see_host(&host);
+                self.items.push(ItemRec {
+                    play: self.current_play.clone(),
+                    host,
+                    task,
+                    item,
+                    changed,
+                    failed,
+                    skipped,
+                });
+            }
             StreamLine::TaskStart { name } => self.tasks.push(name),
             StreamLine::TaskResult {
                 host,
@@ -189,6 +255,7 @@ impl RunState {
             } => {
                 self.see_host(&host);
                 self.results.push(TaskResultRec {
+                    play: self.current_play.clone(),
                     host,
                     task,
                     changed,

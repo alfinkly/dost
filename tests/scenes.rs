@@ -405,3 +405,204 @@ fn pipeline_scene_rejects_bad_definitions_at_load() {
     .unwrap();
     assert!(Scene::from_def(&dup).is_err());
 }
+
+const REPORT: &str = r#"
+id: nodeup
+use: report
+bind:
+  stages:
+    - { play: "^Node baseline", label: Base }
+    - { play: "^Admin users", label: Users }
+    - { play: "^k3s", label: Cluster }
+  sections:
+    - id: users
+      title: Users
+      play: "^Admin users"
+      rules:
+        - { task: "^Admin accounts$", label: "{item}", changed: created, ok: already there, failed: not created }
+    - id: network
+      title: Network
+      rules:
+        - { task: "^Ping every peer over wg1$", label: "{item}", ok: reachable }
+    - id: tools
+      title: Tools
+      rules:
+        - { task: "^Install Docker$", label: Docker, changed: installed, ok: already installed }
+        - { task: "^Enable ufw", label: ufw, changed: enabled, ok: already enabled }
+"#;
+
+fn report_scene() -> Scene {
+    let def: SceneDef = serde_yaml_ng::from_str(REPORT).unwrap();
+    load_scenes(&project(vec![def]))
+        .unwrap()
+        .remove("nodeup")
+        .unwrap()
+}
+
+fn item(host: &str, task: &str, it: &str, changed: bool, failed: bool) -> StreamLine {
+    StreamLine::Item {
+        host: host.into(),
+        task: task.into(),
+        item: it.into(),
+        changed,
+        failed,
+        skipped: false,
+    }
+}
+
+fn draw_report(scene: &Scene, st: &RunState) -> String {
+    let area = Rect::new(0, 0, 100, 24);
+    let mut buf = Buffer::empty(area);
+    scene.render(st, area, &mut buf);
+    text(&buf)
+}
+
+#[test]
+fn report_scene_tells_created_from_already_there_and_failed() {
+    let scene = report_scene();
+    let mut st = RunState::default();
+    st.apply(StreamLine::Play {
+        name: "Admin users".into(),
+    });
+    st.apply(item("n4", "Admin accounts", "alice", true, false));
+    st.apply(item("n4", "Admin accounts", "bob", false, false));
+    st.apply(item("n4", "Admin accounts", "carol", false, true));
+    let t = draw_report(&scene, &st);
+    let row = |n: &str| t.lines().find(|l| l.contains(n)).unwrap_or("").to_string();
+    assert!(row("alice").contains("created"), "{t}");
+    assert!(row("bob").contains("already there"), "{t}");
+    assert!(
+        row("carol").contains("not created") && row("carol").contains('✗'),
+        "{t}"
+    );
+    assert!(t.contains("Users"), "{t}");
+}
+
+#[test]
+fn report_scene_shows_peers_and_tools_from_task_results() {
+    let scene = report_scene();
+    let mut st = RunState::default();
+    st.apply(item(
+        "n4",
+        "Ping every peer over wg1",
+        "circle-ops",
+        false,
+        false,
+    ));
+    st.apply(item(
+        "n4",
+        "Ping every peer over wg1",
+        "opkit-hero",
+        false,
+        false,
+    ));
+    st.apply(result("n4", "Install Docker", true, false));
+    st.apply(result("n4", "Enable ufw with default deny", false, false));
+    let t = draw_report(&scene, &st);
+    assert!(
+        t.contains("circle-ops") && t.contains("opkit-hero") && t.contains("reachable"),
+        "{t}"
+    );
+    assert!(
+        t.lines()
+            .any(|l| l.contains("Docker") && l.contains("installed")),
+        "{t}"
+    );
+    assert!(
+        t.lines()
+            .any(|l| l.contains("ufw") && l.contains("already enabled")),
+        "{t}"
+    );
+}
+
+#[test]
+fn report_scene_stage_header_shows_done_running_and_pending_stages() {
+    let scene = report_scene();
+    let mut st = RunState::default();
+    st.apply(StreamLine::Play {
+        name: "Node baseline".into(),
+    });
+    st.apply(result("n4", "Install Docker", true, false));
+    st.apply(StreamLine::Play {
+        name: "Admin users".into(),
+    });
+    let t = draw_report(&scene, &st);
+    let head = t.lines().next().unwrap();
+    assert!(head.contains("✓ Base"), "{head}");
+    assert!(
+        head.contains("Users") && !head.contains("✓ Users") && !head.contains("○ Users"),
+        "running stage spins: {head}"
+    );
+    assert!(head.contains("○ Cluster"), "{head}");
+    st.apply(StreamLine::Recap {
+        host: "n4".into(),
+        ok: 1,
+        changed: 1,
+        failed: 0,
+        unreachable: 0,
+    });
+    assert!(draw_report(&scene, &st)
+        .lines()
+        .next()
+        .unwrap()
+        .contains("✓ Users"));
+}
+
+#[test]
+fn report_scene_focus_limits_hosts_and_many_hosts_get_a_prefix() {
+    let scene = report_scene();
+    let mut st = RunState {
+        focus: vec!["n4".into()],
+        ..Default::default()
+    };
+    st.apply(item(
+        "n4",
+        "Ping every peer over wg1",
+        "circle-ops",
+        false,
+        false,
+    ));
+    st.apply(item(
+        "other",
+        "Ping every peer over wg1",
+        "n4",
+        false,
+        false,
+    ));
+    let t = draw_report(&scene, &st);
+    assert!(
+        t.contains("circle-ops") && !t.contains("other"),
+        "focus hides other hosts:\n{t}"
+    );
+    let mut all = RunState::default();
+    all.apply(item(
+        "n4",
+        "Ping every peer over wg1",
+        "circle-ops",
+        false,
+        false,
+    ));
+    all.apply(item(
+        "other",
+        "Ping every peer over wg1",
+        "n4",
+        false,
+        false,
+    ));
+    let t = draw_report(&scene, &all);
+    assert!(
+        t.contains("n4: circle-ops") && t.contains("other: n4"),
+        "{t}"
+    );
+}
+
+#[test]
+fn report_scene_rejects_bad_definitions_at_load() {
+    let none: SceneDef = serde_yaml_ng::from_str("id: r\nuse: report\n").unwrap();
+    assert!(Scene::from_def(&none).is_err());
+    let bad_re: SceneDef = serde_yaml_ng::from_str(
+        "id: r\nuse: report\nbind:\n  sections:\n    - { id: a, title: A, rules: [ { task: '(open' } ] }\n",
+    )
+    .unwrap();
+    assert!(Scene::from_def(&bad_re).is_err());
+}

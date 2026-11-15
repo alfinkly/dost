@@ -37,6 +37,30 @@ class CallbackModule(CallbackBase):
         mode = "check" if os.environ.get("DOST_MODE") == "check" else "apply"
         _emit({"t": "start", "mode": mode})
 
+    def v2_playbook_on_play_start(self, play):
+        _emit({"t": "play", "name": play.get_name()})
+
+    def _item(self, result, failed=False, skipped=False):
+        res = result._result
+        no_log = self._no_log(result)
+        label = res.get("_ansible_item_label")
+        if label is None:
+            label = res.get("item")
+        if isinstance(label, (dict, list)):
+            label = json.dumps(label, default=str, sort_keys=True)
+        _emit(
+            {
+                "t": "item",
+                "host": result._host.get_name(),
+                "task": result._task.get_name(),
+                "item": None if (no_log or label is None) else str(label),
+                "changed": bool(res.get("changed", False)),
+                "failed": failed,
+                "skipped": skipped,
+                "no_log": no_log,
+            }
+        )
+
     def v2_playbook_on_task_start(self, task, is_conditional):
         _emit({"t": "task", "name": task.get_name()})
 
@@ -96,6 +120,13 @@ class CallbackModule(CallbackBase):
 
     def v2_runner_item_on_ok(self, result):
         self._maybe_event(result, result._result)
+        self._item(result)
+
+    def v2_runner_item_on_failed(self, result):
+        self._item(result, failed=True)
+
+    def v2_runner_item_on_skipped(self, result):
+        self._item(result, skipped=True)
 
     def v2_runner_on_failed(self, result, ignore_errors=False):
         self._result(result, failed=not ignore_errors)

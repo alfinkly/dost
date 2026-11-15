@@ -9,6 +9,7 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
+use regex::Regex;
 use serde::Deserialize;
 use serde_json::{json, Value};
 
@@ -36,6 +37,8 @@ pub enum SceneError {
     Tree { id: String, reason: String },
     #[error("scene `{id}`: steps: {reason}")]
     Steps { id: String, reason: String },
+    #[error("scene `{id}`: report: {reason}")]
+    Report { id: String, reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -45,6 +48,7 @@ enum Kind {
     Map,
     Results,
     Tree,
+    Report,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +58,7 @@ pub struct Scene {
     theme: Theme,
     tree: Vec<TreeDef>,
     steps: Vec<StepDef>,
+    report: Option<Report>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -81,6 +86,129 @@ fn parse_steps(def: &SceneDef) -> Result<Vec<StepDef>, SceneError> {
         }
     }
     Ok(steps)
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StageDef {
+    play: String,
+    label: String,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct RuleDef {
+    task: String,
+    #[serde(default)]
+    label: Option<String>,
+    #[serde(default)]
+    changed: Option<String>,
+    #[serde(default)]
+    ok: Option<String>,
+    #[serde(default)]
+    failed: Option<String>,
+    #[serde(default)]
+    skipped: Option<String>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct SectionDef {
+    #[allow(dead_code)]
+    id: String,
+    title: String,
+    #[serde(default)]
+    play: Option<String>,
+    rules: Vec<RuleDef>,
+}
+
+#[derive(Debug, Clone)]
+struct Rule {
+    task: Regex,
+    label: String,
+    words: [Option<String>; 4], // changed, ok, failed, skipped
+}
+
+#[derive(Debug, Clone)]
+struct Section {
+    title: String,
+    play: Option<Regex>,
+    rules: Vec<Rule>,
+}
+
+#[derive(Debug, Clone)]
+struct Report {
+    stages: Vec<(Regex, String)>,
+    sections: Vec<Section>,
+}
+
+fn parse_report(def: &SceneDef) -> Result<Report, SceneError> {
+    let err = |reason: String| SceneError::Report {
+        id: def.id.clone(),
+        reason,
+    };
+    let re = |p: &str| Regex::new(p).map_err(|e| err(format!("invalid regex `{p}`: {e}")));
+    let raw_sections: Vec<SectionDef> = serde_json::from_value(
+        def.bind
+            .get("sections")
+            .cloned()
+            .ok_or_else(|| err("needs bind.sections".into()))?,
+    )
+    .map_err(|e| err(format!("bind.sections: {e}")))?;
+    if raw_sections.is_empty() {
+        return Err(err("bind.sections is empty".into()));
+    }
+    let raw_stages: Vec<StageDef> = match def.bind.get("stages") {
+        Some(v) => {
+            serde_json::from_value(v.clone()).map_err(|e| err(format!("bind.stages: {e}")))?
+        }
+        None => Vec::new(),
+    };
+    let mut stages = Vec::new();
+    for s in raw_stages {
+        stages.push((re(&s.play)?, s.label));
+    }
+    let mut sections = Vec::new();
+    for s in raw_sections {
+        let mut rules = Vec::new();
+        for r in s.rules {
+            rules.push(Rule {
+                task: re(&r.task)?,
+                label: r.label.unwrap_or_else(|| "{task}".into()),
+                words: [r.changed, r.ok, r.failed, r.skipped],
+            });
+        }
+        sections.push(Section {
+            title: s.title,
+            play: s.play.as_deref().map(re).transpose()?,
+            rules,
+        });
+    }
+    Ok(Report { stages, sections })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum RowState {
+    Changed,
+    Ok,
+    Failed,
+    Skipped,
+}
+
+struct Row {
+    host: String,
+    label: String,
+    state: RowState,
+    word: String,
+}
+
+fn row_state(changed: bool, failed: bool, skipped: bool) -> RowState {
+    if failed {
+        RowState::Failed
+    } else if skipped {
+        RowState::Skipped
+    } else if changed {
+        RowState::Changed
+    } else {
+        RowState::Ok
+    }
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -151,6 +279,7 @@ impl Scene {
             "map" => Kind::Map,
             "results" => Kind::Results,
             "tree" => Kind::Tree,
+            "report" => Kind::Report,
             other => {
                 return Err(SceneError::UnknownKind {
                     id: def.id.clone(),
@@ -184,17 +313,200 @@ impl Scene {
         } else {
             Vec::new()
         };
+        let report = if kind == Kind::Report {
+            Some(parse_report(def)?)
+        } else {
+            None
+        };
         Ok(Scene {
             def: def.clone(),
             kind,
             theme,
             tree,
             steps,
+            report,
         })
     }
 
     pub fn id(&self) -> &str {
         &self.def.id
+    }
+
+    fn stage_status(&self, state: &RunState, play: &Regex) -> NodeStatus {
+        let failed = state
+            .results
+            .iter()
+            .any(|r| play.is_match(&r.play) && (r.failed || r.unreachable));
+        if failed {
+            NodeStatus::Failed
+        } else if play.is_match(&state.current_play) && !state.finished {
+            NodeStatus::Running
+        } else if state.plays.iter().any(|p| play.is_match(p)) {
+            NodeStatus::Ok
+        } else {
+            NodeStatus::Pending
+        }
+    }
+
+    fn report_rows(&self, state: &RunState, section: &Section) -> Vec<Row> {
+        let allowed = |h: &str| state.focus.is_empty() || state.focus.iter().any(|f| f == h);
+        let mut rows: Vec<Row> = Vec::new();
+        for rule in &section.rules {
+            let fill = |tpl: &str, host: &str, task: &str, item: &str| {
+                tpl.replace("{item}", item)
+                    .replace("{host}", host)
+                    .replace("{task}", task)
+            };
+            let items: Vec<_> = state
+                .items
+                .iter()
+                .filter(|i| rule.task.is_match(&i.task) && allowed(&i.host))
+                .collect();
+            let mut found: Vec<(String, String, RowState)> = Vec::new();
+            if items.is_empty() {
+                for r in state
+                    .results
+                    .iter()
+                    .filter(|r| rule.task.is_match(&r.task) && allowed(&r.host))
+                {
+                    found.push((
+                        r.host.clone(),
+                        fill(&rule.label, &r.host, &r.task, ""),
+                        row_state(r.changed, r.failed || r.unreachable, r.skipped),
+                    ));
+                }
+            } else {
+                for i in items {
+                    found.push((
+                        i.host.clone(),
+                        fill(&rule.label, &i.host, &i.task, &i.item),
+                        row_state(i.changed, i.failed, i.skipped),
+                    ));
+                }
+            }
+            for (host, label, st) in found {
+                let word = rule.words[match st {
+                    RowState::Changed => 0,
+                    RowState::Ok => 1,
+                    RowState::Failed => 2,
+                    RowState::Skipped => 3,
+                }]
+                .clone()
+                .unwrap_or_else(|| {
+                    match st {
+                        RowState::Changed => "changed",
+                        RowState::Ok => "already",
+                        RowState::Failed => "failed",
+                        RowState::Skipped => "skipped",
+                    }
+                    .into()
+                });
+                rows.retain(|r| !(r.host == host && r.label == label));
+                rows.push(Row {
+                    host,
+                    label,
+                    state: st,
+                    word,
+                });
+            }
+        }
+        rows
+    }
+
+    /// Stages of the run as a header, then sections of rows built from task and item results
+    /// by the scene's rules; `focus` limits the rows to the named hosts.
+    fn render_report(&self, state: &RunState, area: Rect, buf: &mut Buffer) {
+        let Some(report) = &self.report else { return };
+        if area.height == 0 {
+            return;
+        }
+        let mut spans: Vec<Span> = Vec::new();
+        for (i, (play, label)) in report.stages.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw(" ─▶ "));
+            }
+            let st = self.stage_status(state, play);
+            spans.push(Span::styled(
+                st.glyph_at(state.frame),
+                st.style(&self.theme),
+            ));
+            spans.push(Span::raw(format!(" {label}")));
+        }
+        if !spans.is_empty() {
+            buf.set_line(area.x, area.y, &Line::from(spans), area.width);
+        }
+        let body_y = area.y + if report.stages.is_empty() { 0 } else { 2 };
+        if body_y >= area.y + area.height {
+            return;
+        }
+        let body = Rect::new(area.x, body_y, area.width, area.y + area.height - body_y);
+        let all: Vec<(&Section, Vec<Row>)> = report
+            .sections
+            .iter()
+            .map(|s| (s, self.report_rows(state, s)))
+            .collect();
+        let mut hosts: Vec<&str> = all
+            .iter()
+            .flat_map(|(_, rows)| rows.iter().map(|r| r.host.as_str()))
+            .collect();
+        hosts.sort();
+        hosts.dedup();
+        let prefix = hosts.len() > 1;
+        let ncols = if body.width >= 80 { 2 } else { 1 };
+        let col_w = body.width / ncols as u16;
+        let mut columns: Vec<Vec<Line>> = vec![Vec::new(); ncols];
+        for (idx, (section, rows)) in all.iter().enumerate() {
+            let col = &mut columns[idx % ncols];
+            if !col.is_empty() {
+                col.push(Line::raw(""));
+            }
+            let running = section
+                .play
+                .as_ref()
+                .is_some_and(|p| p.is_match(&state.current_play))
+                && !state.finished;
+            let mut head = vec![Span::styled(
+                section.title.clone(),
+                Style::default().add_modifier(Modifier::BOLD),
+            )];
+            if running {
+                head.push(Span::styled(
+                    format!(" {}", NodeStatus::Running.glyph_at(state.frame)),
+                    NodeStatus::Running.style(&self.theme),
+                ));
+            }
+            col.push(Line::from(head));
+            for r in rows {
+                let (glyph, color) = match r.state {
+                    RowState::Changed => ("+", self.theme.ok),
+                    RowState::Ok => ("✓", self.theme.ok),
+                    RowState::Failed => ("✗", self.theme.fail),
+                    RowState::Skipped => ("–", self.theme.pending),
+                };
+                let label = if prefix {
+                    format!("{}: {}", r.host, r.label)
+                } else {
+                    r.label.clone()
+                };
+                col.push(Line::from(vec![
+                    Span::styled(glyph, Style::default().fg(color)),
+                    Span::raw(format!(" {label}")),
+                    Span::styled(
+                        format!("  {}", r.word),
+                        Style::default().add_modifier(Modifier::DIM),
+                    ),
+                ]));
+            }
+        }
+        for (i, lines) in columns.into_iter().enumerate() {
+            let rect = Rect::new(body.x + col_w * i as u16, body.y, col_w, body.height);
+            for (k, line) in lines.iter().enumerate() {
+                if k as u16 >= rect.height {
+                    break;
+                }
+                buf.set_line(rect.x, rect.y + k as u16, line, rect.width);
+            }
+        }
     }
 
     /// The node ids of a `tree` scene; `None` for other kinds.
@@ -268,6 +580,7 @@ impl Scene {
             Kind::Map => self.render_map(state, inner, buf),
             Kind::Results => self.render_results(state, inner, buf),
             Kind::Tree => self.render_tree(state, inner, buf),
+            Kind::Report => self.render_report(state, inner, buf),
         }
         if check {
             buf.set_style(inner, Style::default().add_modifier(Modifier::DIM));

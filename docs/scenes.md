@@ -33,6 +33,30 @@ bind:
 - `map`: hosts in a row joined by links. `links` (default `event.link[*]`) is a path to link
   objects `{a, b, state}`.
 - `results`: the tasks that changed something.
+- `report`: **ordinary Ansible, prettier.** No events needed: it reads the task and loop-item
+  results of the run and sorts them into titled sections with rules, plus a header of the plays
+  (stages) with a spinner on the one running. Rows say what happened: created / already there /
+  failed, per loop item (users, peers, packages).
+  ```yaml
+  id: nodeup
+  use: report
+  bind:
+    stages:
+      - { play: "^Admin users", label: Users }
+    sections:
+      - id: users
+        title: Users
+        play: "^Admin users"          # optional: the section title spins while this play runs
+        rules:
+          - task: "^Admin accounts$"  # regex on the task name
+            label: "{item}"            # {item} is the loop item label, {host}, {task} also work
+            changed: created           # words per outcome: changed / ok / failed / skipped
+            ok: already there
+            failed: not created
+  ```
+  A rule that matches loop items makes one row per item, otherwise one row per task result. With
+  `focus: [host, ...]` in the catalog only those hosts' rows are shown (the others are hidden, which
+  matters for plays that run on every node); when several hosts remain, rows get a `host:` prefix.
 - `tree`: a fixed hierarchy drawn top-down, the same picture for every playbook that uses it.
   The structure is yours, in `bind.nodes` (`id`, `label`, optional `parent`; ids are unique, parents must exist, no cycles).
   A command declares which nodes it works on with `focus: [id, ...]` in the catalog: those nodes
