@@ -279,3 +279,30 @@ fn config_is_read_from_dot_dost_config_yml_and_falls_back_to_defaults() {
         "a broken file falls back to the defaults"
     );
 }
+
+#[test]
+fn an_error_envelope_without_a_result_text_still_says_what_went_wrong() {
+    let budget = r#"{"type":"result","subtype":"error_max_budget_usd","is_error":true,"result":"","total_cost_usd":0.51}"#;
+    let e = parse_envelope(budget).unwrap_err().to_string();
+    assert!(e.contains("budget") && e.contains("max_budget_usd"), "{e}");
+    let turns = r#"{"type":"result","subtype":"error_max_turns","is_error":true}"#;
+    assert!(parse_envelope(turns)
+        .unwrap_err()
+        .to_string()
+        .contains("turns"));
+    let api = r#"{"type":"result","subtype":"success","is_error":true,"result":"","api_error_status":529}"#;
+    let e = parse_envelope(api).unwrap_err().to_string();
+    assert!(e.contains("529"), "{e}");
+    let nothing = r#"{"type":"result","is_error":true,"weird_field":"x"}"#;
+    let e = parse_envelope(nothing).unwrap_err().to_string();
+    assert!(
+        e.contains("weird_field"),
+        "an unknown error shape shows the raw envelope: {e}"
+    );
+    assert!(!e.trim_end().ends_with(':'), "never an empty message: {e}");
+}
+
+#[test]
+fn default_budget_leaves_room_for_reading_a_few_files() {
+    assert!(AssistantConfig::default().max_budget_usd >= 1.0);
+}

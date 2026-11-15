@@ -28,7 +28,7 @@ impl Default for AssistantConfig {
             command: "claude".into(),
             model: None,
             tools: vec!["Read".into(), "Grep".into(), "Glob".into()],
-            max_budget_usd: 0.5,
+            max_budget_usd: 1.0,
             timeout_secs: 180,
         }
     }
@@ -240,6 +240,41 @@ fn into_advice(raw: RawAdvice) -> Result<Advice, AssistantError> {
     })
 }
 
+/// A readable reason for an error envelope, even when `result` is empty.
+fn describe_error(env: &serde_json::Value, result_text: &str) -> String {
+    let subtype = env.get("subtype").and_then(|v| v.as_str()).unwrap_or("");
+    let mut parts: Vec<String> = Vec::new();
+    if !result_text.trim().is_empty() {
+        parts.push(result_text.trim().to_string());
+    }
+    match subtype {
+        "error_max_budget_usd" => parts.push(
+            "the request hit its budget cap; raise assistant.max_budget_usd in .dost/config.yml"
+                .into(),
+        ),
+        "error_max_turns" => {
+            parts.push("Claude used up its allowed turns without answering".into())
+        }
+        "error_during_execution" => parts.push("Claude failed while working".into()),
+        "" | "success" => {}
+        other => parts.push(format!("reason: {other}")),
+    }
+    if let Some(code) = env.get("api_error_status").filter(|v| !v.is_null()) {
+        parts.push(format!("API status {code}"));
+    }
+    if let Some(r) = env.get("terminal_reason").and_then(|v| v.as_str()) {
+        if !r.is_empty() && r != "completed" {
+            parts.push(format!("ended: {r}"));
+        }
+    }
+    if parts.is_empty() {
+        let raw = env.to_string();
+        let cut: String = raw.chars().take(300).collect();
+        parts.push(format!("unrecognised error answer {cut}"));
+    }
+    parts.join("; ")
+}
+
 /// Read the JSON envelope printed by `claude -p --output-format json`.
 pub fn parse_envelope(stdout: &str) -> Result<Advice, AssistantError> {
     let env: serde_json::Value = serde_json::from_str(stdout.trim())
@@ -247,13 +282,12 @@ pub fn parse_envelope(stdout: &str) -> Result<Advice, AssistantError> {
     let result_text = env.get("result").and_then(|v| v.as_str()).unwrap_or("");
     if env.get("is_error").and_then(|v| v.as_bool()) == Some(true) {
         let low = result_text.to_lowercase();
-        return Err(
-            if low.contains("authenticate") || low.contains("oauth") || low.contains("login") {
-                AssistantError::NotSignedIn(result_text.to_string())
-            } else {
-                AssistantError::Reported(result_text.to_string())
-            },
-        );
+        if !result_text.trim().is_empty()
+            && (low.contains("authenticate") || low.contains("oauth") || low.contains("login"))
+        {
+            return Err(AssistantError::NotSignedIn(result_text.to_string()));
+        }
+        return Err(AssistantError::Reported(describe_error(&env, result_text)));
     }
     let body = match env.get("structured_output") {
         Some(v) if v.is_object() => v.to_string(),
