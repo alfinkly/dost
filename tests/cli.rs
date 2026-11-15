@@ -8,8 +8,13 @@ fn dost() -> Command {
 fn help_lists_all_subcommands() {
     let out = dost().arg("--help").output().unwrap();
     let text = String::from_utf8_lossy(&out.stdout);
-    for sub in ["run", "chain", "status", "history", "init", "demo", "doctor"] {
-        assert!(text.contains(sub), "help is missing subcommand {sub}:\n{text}");
+    for sub in [
+        "run", "chain", "status", "history", "init", "demo", "doctor",
+    ] {
+        assert!(
+            text.contains(sub),
+            "help is missing subcommand {sub}:\n{text}"
+        );
     }
 }
 
