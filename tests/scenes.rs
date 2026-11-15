@@ -295,3 +295,113 @@ fn tree_scene_rejects_bad_definitions_at_load() {
     .unwrap();
     assert!(Scene::from_def(&dup).is_err());
 }
+
+fn pipeline_scene() -> Scene {
+    let def: SceneDef = serde_yaml_ng::from_str(
+        "id: gpu\nuse: chain\nbind:\n  steps:\n    - { id: host, label: opkit-hero }\n    - { id: ports, label: Ports }\n    - { id: gpu, label: GPU host }\n    - { id: models, label: Models }\n",
+    )
+    .unwrap();
+    load_scenes(&project(vec![def]))
+        .unwrap()
+        .remove("gpu")
+        .unwrap()
+}
+
+fn step(host: &str, id: &str, state: &str, detail: Option<&str>) -> StreamLine {
+    event(
+        host,
+        "step",
+        Some(id),
+        json!({"state": state, "detail": detail}),
+    )
+}
+
+#[test]
+fn pipeline_scene_walks_the_links_with_spinner_and_details() {
+    let scene = pipeline_scene();
+    let mut st = RunState::default();
+    st.apply(StreamLine::RunStart {
+        mode: RunMode::Apply,
+    });
+    st.apply(step(
+        "hero",
+        "host",
+        "ok",
+        Some("gpu-tunnel.service active"),
+    ));
+    st.apply(step("hero", "ports", "running", None));
+    let t = draw(&scene, &st);
+    let line = |needle: &str| {
+        t.lines()
+            .find(|l| l.contains(needle))
+            .unwrap_or("")
+            .to_string()
+    };
+    assert!(
+        line("opkit-hero").contains('✓')
+            && line("opkit-hero").contains("gpu-tunnel.service active"),
+        "{t}"
+    );
+    assert!(
+        !line("Ports").contains('✓') && !line("Ports").contains('○'),
+        "running link spins:\n{t}"
+    );
+    assert!(
+        line("GPU host").contains('○') && line("Models").contains('○'),
+        "not reached yet:\n{t}"
+    );
+    st.apply(step("hero", "ports", "ok", Some("8000 ✓  8002 ✓")));
+    let t2 = draw(&scene, &st);
+    assert!(
+        t2.lines()
+            .find(|l| l.contains("Ports"))
+            .unwrap()
+            .contains("8000 ✓  8002 ✓"),
+        "{t2}"
+    );
+}
+
+#[test]
+fn pipeline_scene_marks_failed_link_and_an_interrupted_running_one() {
+    let scene = pipeline_scene();
+    let mut st = RunState::default();
+    st.apply(step("hero", "host", "ok", None));
+    st.apply(step("hero", "ports", "failed", Some("8003 ✗")));
+    let t = draw(&scene, &st);
+    assert!(
+        t.lines()
+            .find(|l| l.contains("Ports"))
+            .unwrap()
+            .contains('✗'),
+        "{t}"
+    );
+    let mut st = RunState::default();
+    st.apply(step("hero", "gpu", "running", None));
+    st.apply(StreamLine::Recap {
+        host: "hero".into(),
+        ok: 1,
+        changed: 0,
+        failed: 0,
+        unreachable: 0,
+    });
+    let t = draw(&scene, &st);
+    assert!(
+        t.lines()
+            .find(|l| l.contains("GPU host"))
+            .unwrap()
+            .contains('✗'),
+        "a link still running when the run ended did not finish:\n{t}"
+    );
+}
+
+#[test]
+fn pipeline_scene_rejects_bad_definitions_at_load() {
+    let empty: SceneDef =
+        serde_yaml_ng::from_str("id: g\nuse: chain\nbind:\n  steps: []\n").unwrap();
+    assert!(Scene::from_def(&empty).is_err());
+    let dup: SceneDef = serde_yaml_ng::from_str(
+        "id: g\nuse: chain\nbind:\n  steps:\n    - { id: a, label: A }\n    - { id: a, label: B }\n",
+    )
+    .unwrap();
+    assert!(Scene::from_def(&dup).is_err());
+}

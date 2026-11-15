@@ -30,6 +30,7 @@ Quote `"on"` and `"off"`: unquoted they are booleans in YAML 1.1.
 | kind | payload | scene |
 |---|---|---|
 | `ports` | `state: {port: on/off}`, optional `was: {port: on/off}` | `ports` (table per host, was/now, changes highlighted) |
+| `step` | `state: running/ok/failed`, optional `detail`; `key` is a step id of a `chain` scene with `bind.steps` | `chain` with steps (one link per step, spinner on the running one) |
 | `node` | `state: up/down/running/pending`; `key` is the id of a node of a `tree` scene | `tree` (status of any node; no need to send it for nodes in `focus`) |
 | `link` | `a`, `b`, `state: up/down` (use `key` to send several) | `vpn` (map of hosts; a down link shows a break marker, hosts named only in links show as not joined) |
 

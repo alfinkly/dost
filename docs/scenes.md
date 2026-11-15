@@ -15,6 +15,19 @@ bind:
 
 ## Kinds
 - `chain`: the tasks of the run in order with a status each. No binding needed.
+  With `bind.steps` it becomes a **fixed chain** of named links drawn top-down with connectors:
+  ```yaml
+  id: gpu
+  use: chain
+  bind:
+    steps:
+      - { id: host,  label: opkit-hero }
+      - { id: ports, label: Ports }
+      - { id: gpu,   label: GPU host }
+  ```
+  The playbook drives it with `step` events (key = step id, `state: running|ok|failed`, optional
+  `detail` text shown dim next to the link). A running link shows a spinner, links not reached yet are
+  `○`, and a link still running when the run ends is shown as failed.
 - `table`: one table per host. `rows` (required) and `was` (optional) are paths; `columns`
   are header names. A cell that differs from `was` is highlighted.
 - `map`: hosts in a row joined by links. `links` (default `event.link[*]`) is a path to link

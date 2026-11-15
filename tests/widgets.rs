@@ -292,3 +292,63 @@ fn tree_with_unknown_parent_shows_the_node_at_the_top() {
     };
     assert!(text(&render(w, 30, 3)).contains("orphan"));
 }
+
+use dost::widgets::{PipelineLink, PipelineWidget};
+
+fn plink(label: &str, st: NodeStatus, detail: Option<&str>) -> PipelineLink {
+    PipelineLink {
+        label: label.into(),
+        status: st,
+        detail: detail.map(String::from),
+    }
+}
+
+fn pipeline(frame: u64, second: NodeStatus) -> PipelineWidget {
+    PipelineWidget {
+        links: vec![
+            plink("Host", NodeStatus::Ok, Some("tunnel active")),
+            plink("Ports", second, Some("8000 ✓  8002 ✓")),
+            plink("GPU host", NodeStatus::Pending, None),
+        ],
+        frame,
+        theme: Theme::default(),
+    }
+}
+
+#[test]
+fn pipeline_draws_links_connectors_and_details() {
+    let t = text(&render(pipeline(0, NodeStatus::Ok), 60, 8));
+    let lines: Vec<&str> = t.lines().collect();
+    assert!(
+        lines[0].contains('✓') && lines[0].contains("Host") && lines[0].contains("tunnel active"),
+        "{t}"
+    );
+    assert!(
+        lines[1].trim_start().starts_with('│'),
+        "connector between links:\n{t}"
+    );
+    assert!(
+        lines[2].contains("Ports") && lines[2].contains("8000 ✓  8002 ✓"),
+        "{t}"
+    );
+    assert!(
+        lines[4].contains('○') && lines[4].contains("GPU host"),
+        "{t}"
+    );
+}
+
+#[test]
+fn pipeline_spinner_only_animates_the_running_link() {
+    let a = text(&render(pipeline(0, NodeStatus::Running), 60, 8));
+    let b = text(&render(pipeline(4, NodeStatus::Running), 60, 8));
+    assert_ne!(a, b);
+    let c = text(&render(pipeline(0, NodeStatus::Ok), 60, 8));
+    let d = text(&render(pipeline(4, NodeStatus::Ok), 60, 8));
+    assert_eq!(c, d);
+}
+
+#[test]
+fn pipeline_clips_without_panicking_in_tiny_areas() {
+    let _ = render(pipeline(1, NodeStatus::Running), 5, 2);
+    let _ = render(pipeline(1, NodeStatus::Running), 0, 0);
+}

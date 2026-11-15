@@ -3,6 +3,7 @@
 mod chain;
 mod graph;
 mod map;
+mod pipeline;
 mod progress;
 mod table;
 mod tree;
@@ -10,6 +11,7 @@ mod tree;
 pub use chain::ChainWidget;
 pub use graph::GraphWidget;
 pub use map::{LinkState, MapLink, MapNode, MapWidget};
+pub use pipeline::{PipelineLink, PipelineWidget};
 pub use progress::ProgressWidget;
 pub use table::{Cell, TableWidget};
 pub use tree::{TreeNode, TreeWidget};

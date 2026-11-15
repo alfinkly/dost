@@ -16,8 +16,8 @@ use crate::catalog::{Project, SceneDef};
 use crate::stream::{RunMode, RunState};
 use crate::theme::Theme;
 use crate::widgets::{
-    Cell, ChainWidget, LinkState, MapLink, MapNode, MapWidget, NodeStatus, TableWidget, TreeNode,
-    TreeWidget,
+    Cell, ChainWidget, LinkState, MapLink, MapNode, MapWidget, NodeStatus, PipelineLink,
+    PipelineWidget, TableWidget, TreeNode, TreeWidget,
 };
 
 pub use bind::{parse_path, resolve_path, BindError, Seg};
@@ -34,6 +34,8 @@ pub enum SceneError {
     MissingRows { id: String },
     #[error("scene `{id}`: tree: {reason}")]
     Tree { id: String, reason: String },
+    #[error("scene `{id}`: steps: {reason}")]
+    Steps { id: String, reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -51,6 +53,34 @@ pub struct Scene {
     kind: Kind,
     theme: Theme,
     tree: Vec<TreeDef>,
+    steps: Vec<StepDef>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct StepDef {
+    id: String,
+    label: String,
+}
+
+fn parse_steps(def: &SceneDef) -> Result<Vec<StepDef>, SceneError> {
+    let err = |reason: String| SceneError::Steps {
+        id: def.id.clone(),
+        reason,
+    };
+    let Some(raw) = def.bind.get("steps") else {
+        return Ok(Vec::new());
+    };
+    let steps: Vec<StepDef> =
+        serde_json::from_value(raw.clone()).map_err(|e| err(format!("bind.steps: {e}")))?;
+    if steps.is_empty() {
+        return Err(err("bind.steps is empty".into()));
+    }
+    for (i, s) in steps.iter().enumerate() {
+        if steps[..i].iter().any(|o| o.id == s.id) {
+            return Err(err(format!("duplicate step id `{}`", s.id)));
+        }
+    }
+    Ok(steps)
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -149,11 +179,17 @@ impl Scene {
         } else {
             Vec::new()
         };
+        let steps = if kind == Kind::Chain {
+            parse_steps(def)?
+        } else {
+            Vec::new()
+        };
         Ok(Scene {
             def: def.clone(),
             kind,
             theme,
             tree,
+            steps,
         })
     }
 
@@ -238,7 +274,50 @@ impl Scene {
         }
     }
 
+    /// A fixed chain whose links are driven by `step` events (key = step id,
+    /// `state: running|ok|failed`, optional `detail`).
+    fn render_pipeline(&self, state: &RunState, area: Rect, buf: &mut Buffer) {
+        let links = self
+            .steps
+            .iter()
+            .map(|s| {
+                let ev = state
+                    .events
+                    .iter()
+                    .find(|((_, kind, key), _)| kind == "step" && key == &s.id)
+                    .map(|(_, d)| d);
+                let mut status = match ev.and_then(|d| d.get("state")).and_then(Value::as_str) {
+                    Some("running") => NodeStatus::Running,
+                    Some("ok") | Some("up") => NodeStatus::Ok,
+                    Some("failed") | Some("down") => NodeStatus::Failed,
+                    _ => NodeStatus::Pending,
+                };
+                if status == NodeStatus::Running && state.finished {
+                    status = NodeStatus::Failed;
+                }
+                let detail = ev
+                    .and_then(|d| d.get("detail"))
+                    .and_then(Value::as_str)
+                    .map(String::from);
+                PipelineLink {
+                    label: s.label.clone(),
+                    status,
+                    detail,
+                }
+            })
+            .collect();
+        PipelineWidget {
+            links,
+            frame: state.frame,
+            theme: self.theme.clone(),
+        }
+        .render(area, buf);
+    }
+
     fn render_chain(&self, state: &RunState, area: Rect, buf: &mut Buffer) {
+        if !self.steps.is_empty() {
+            return self.render_pipeline(state, area, buf);
+        }
         let mut names: Vec<&String> = Vec::new();
         for t in &state.tasks {
             if !names.contains(&t) {
