@@ -186,6 +186,51 @@ impl App {
         )
     }
 
+    /// True when the failure says the sudo password was wrong or missing.
+    fn password_rejected(&self) -> bool {
+        const MARKERS: [&str; 3] = [
+            "incorrect sudo password",
+            "missing sudo password",
+            "a password is required",
+        ];
+        let mut texts: Vec<String> = self
+            .state
+            .results
+            .iter()
+            .filter(|r| r.failed || r.unreachable)
+            .filter_map(|r| r.msg.clone())
+            .collect();
+        texts.extend(self.state.event_failures().into_iter().map(|f| f.detail));
+        texts.push(self.last_tail.clone());
+        texts
+            .iter()
+            .any(|t| MARKERS.iter().any(|m| t.to_lowercase().contains(m)))
+    }
+
+    /// The last run ended without success (a failed task, a red link, a non-zero exit or an error).
+    pub(crate) fn run_failed(&self) -> bool {
+        self.error.is_some() || self.last_exit != Some(0) || self.state.any_failed()
+    }
+
+    fn retry(&mut self, mode: RunMode) -> Action {
+        self.message = if self.command().needs_become && self.password.is_none() {
+            Some("The previous sudo password was not accepted. Enter it again.".into())
+        } else {
+            None
+        };
+        self.begin(mode)
+    }
+
+    /// Retry and type the sudo password again (a no-op for commands without one).
+    fn retry_with_new_password(&mut self, mode: RunMode) -> Action {
+        if !self.command().needs_become {
+            return Action::None;
+        }
+        self.password = None;
+        self.message = Some("Enter the sudo password again.".into());
+        self.begin(mode)
+    }
+
     pub(crate) fn hints(&self) -> Vec<&crate::catalog::ErrorRule> {
         hints_for(&self.project.errors, &self.state, &self.last_tail)
     }
@@ -199,6 +244,7 @@ impl App {
 
     fn back_to_menu(&mut self) {
         self.screen = ScreenKind::Menu;
+        self.message = None;
         self.password = None;
         self.pw_input.clear();
         self.pw_len = 0;
@@ -226,6 +272,7 @@ impl App {
             ..RunState::default()
         };
         self.running_mode = mode;
+        self.message = None;
         self.screen = ScreenKind::Running;
         self.tab = Tab::Scene;
         self.error = None;
@@ -279,6 +326,8 @@ impl App {
             },
             ScreenKind::ApplyConfirm => self.key_apply_confirm(key, ctrl_c),
             ScreenKind::CheckFailed => match key.code {
+                KeyCode::Char('r') => self.retry(RunMode::Check),
+                KeyCode::Char('p') => self.retry_with_new_password(RunMode::Check),
                 KeyCode::Char('a') => {
                     self.forced = true;
                     self.skipped_check = false;
@@ -297,6 +346,10 @@ impl App {
                 _ => Action::None,
             },
             ScreenKind::Result => match key.code {
+                KeyCode::Char('r') if self.run_failed() => self.retry(RunMode::Apply),
+                KeyCode::Char('p') if self.run_failed() => {
+                    self.retry_with_new_password(RunMode::Apply)
+                }
                 KeyCode::Enter | KeyCode::Esc | KeyCode::Char('q') => {
                     self.back_to_menu();
                     Action::None
@@ -475,6 +528,12 @@ impl App {
             outcome.exit_code,
         ));
         let success = outcome.exit_code == Some(0) && !self.state.any_failed();
+        if !success && self.password_rejected() {
+            // A password that sudo refused must not be reused by the next attempt.
+            self.password = None;
+            self.message =
+                Some("The sudo password was not accepted. Press r to retry with a new one.".into());
+        }
         match self.running_mode {
             RunMode::Check => {
                 if success {

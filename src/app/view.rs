@@ -53,8 +53,22 @@ pub fn draw(app: &App, f: &mut Frame) {
         ScreenKind::Password => "Enter confirm · Esc cancel",
         ScreenKind::Running => "Tab switch view · q cancel",
         ScreenKind::ApplyConfirm => "Enter apply · Esc cancel",
-        ScreenKind::CheckFailed => "a apply anyway · Enter back",
-        ScreenKind::Result => "Enter back to menu",
+        ScreenKind::CheckFailed => {
+            if app.command().needs_become {
+                "r retry · p retry with a new password · a apply anyway · Enter back"
+            } else {
+                "r retry · a apply anyway · Enter back"
+            }
+        }
+        ScreenKind::Result => {
+            if !app.run_failed() {
+                "Enter back to menu"
+            } else if app.command().needs_become {
+                "r retry · p retry with a new password · Enter back"
+            } else {
+                "r retry · Enter back"
+            }
+        }
     };
     f.render_widget(Paragraph::new(footer).style(dim()), foot);
     match app.screen {
@@ -305,6 +319,10 @@ fn check_failed(app: &App, f: &mut Frame, area: Rect) {
         Line::styled("Check failed. Nothing was changed.", bold()),
         Line::raw(""),
     ];
+    if let Some(m) = &app.message {
+        lines.push(Line::styled(m.clone(), bold()));
+        lines.push(Line::raw(""));
+    }
     lines.extend(failure_lines(app));
     f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
 }
@@ -324,6 +342,9 @@ fn result(app: &App, f: &mut Frame, area: Rect) {
         }
     } else {
         lines.push(Line::styled("The run failed.", bold()));
+        if let Some(m) = &app.message {
+            lines.push(Line::styled(m.clone(), bold()));
+        }
         if let Some(e) = &app.error {
             lines.push(Line::raw(e.clone()));
         }

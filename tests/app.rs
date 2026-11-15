@@ -518,3 +518,176 @@ fn error_rules_also_match_the_details_of_red_links() {
     app.on_finished(ok(0));
     assert!(screen(&app).contains("Provider limits new SSH connections"));
 }
+
+fn failing(msg: &str) -> StreamLine {
+    result("h", true, Some(msg))
+}
+
+/// perimeter (needs a sudo password): menu -> preflight -> password "oldpw" -> check running.
+fn perimeter_check_running(app: &mut App) {
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    type_str(app, "oldpw");
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Enter)),
+        Action::Start {
+            mode: RunMode::Check,
+            ..
+        }
+    ));
+}
+
+fn pw_text(app: &App) -> String {
+    String::from_utf8(app.password().expect("a stored password").expose().to_vec()).unwrap()
+}
+
+#[test]
+fn wrong_sudo_password_drops_it_and_r_asks_for_a_new_one_then_retries() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    perimeter_check_running(&mut app);
+    app.on_stream(failing("Incorrect sudo password"));
+    app.on_finished(ok(2));
+    assert_eq!(app.screen_kind(), ScreenKind::CheckFailed);
+    assert!(
+        app.password().is_none(),
+        "a rejected password must not be reused"
+    );
+    let t = screen(&app);
+    assert!(t.contains("not accepted") && t.contains("r retry"), "{t}");
+    assert!(matches!(app.handle_key(key('r')), Action::None));
+    assert_eq!(app.screen_kind(), ScreenKind::Password);
+    assert!(
+        screen(&app).contains("not accepted"),
+        "the password prompt says why it is asked again"
+    );
+    type_str(&mut app, "newpw");
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Enter)),
+        Action::Start {
+            mode: RunMode::Check,
+            ..
+        }
+    ));
+    assert_eq!(pw_text(&app), "newpw");
+    assert_eq!(app.screen_kind(), ScreenKind::Running);
+}
+
+#[test]
+fn r_retries_a_non_password_failure_with_the_same_password() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    perimeter_check_running(&mut app);
+    app.on_stream(failing("Connection reset by peer"));
+    app.on_finished(ok(4));
+    assert_eq!(pw_text(&app), "oldpw", "a good password is kept");
+    assert!(matches!(
+        app.handle_key(key('r')),
+        Action::Start {
+            mode: RunMode::Check,
+            ..
+        }
+    ));
+    assert_eq!(pw_text(&app), "oldpw");
+}
+
+#[test]
+fn p_forces_a_new_password_even_when_the_old_one_was_fine() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    perimeter_check_running(&mut app);
+    app.on_stream(failing("Connection reset by peer"));
+    app.on_finished(ok(4));
+    assert!(matches!(app.handle_key(key('p')), Action::None));
+    assert_eq!(app.screen_kind(), ScreenKind::Password);
+    type_str(&mut app, "other");
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Enter)),
+        Action::Start {
+            mode: RunMode::Check,
+            ..
+        }
+    ));
+    assert_eq!(pw_text(&app), "other");
+}
+
+#[test]
+fn a_failed_apply_can_be_retried_without_typing_the_id_again() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    perimeter_check_running(&mut app);
+    app.on_stream(result("h", false, None));
+    app.on_finished(ok(0));
+    type_str(&mut app, "perimeter");
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Enter)),
+        Action::Start {
+            mode: RunMode::Apply,
+            ..
+        }
+    ));
+    app.on_stream(failing("Connection reset by peer"));
+    app.on_finished(ok(4));
+    assert_eq!(app.screen_kind(), ScreenKind::Result);
+    assert!(screen(&app).contains("r retry"));
+    assert!(matches!(
+        app.handle_key(key('r')),
+        Action::Start {
+            mode: RunMode::Apply,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn a_wrong_password_during_apply_asks_again_and_then_applies_again() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    perimeter_check_running(&mut app);
+    app.on_stream(result("h", false, None));
+    app.on_finished(ok(0));
+    type_str(&mut app, "perimeter");
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(failing("Incorrect sudo password"));
+    app.on_finished(ok(2));
+    assert!(app.password().is_none());
+    assert!(matches!(app.handle_key(key('r')), Action::None));
+    assert_eq!(app.screen_kind(), ScreenKind::Password);
+    type_str(&mut app, "fixed");
+    assert!(matches!(
+        app.handle_key(code(KeyCode::Enter)),
+        Action::Start {
+            mode: RunMode::Apply,
+            ..
+        }
+    ));
+}
+
+#[test]
+fn r_does_nothing_on_a_successful_result() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(result("h", false, None));
+    app.on_finished(ok(0));
+    app.handle_key(code(KeyCode::Enter)); // apply
+    app.on_stream(result("h", false, None));
+    app.on_finished(ok(0));
+    assert_eq!(app.screen_kind(), ScreenKind::Result);
+    assert!(matches!(app.handle_key(key('r')), Action::None));
+    assert_eq!(app.screen_kind(), ScreenKind::Result);
+}
+
+#[test]
+fn missing_sudo_password_message_is_also_recognised() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    perimeter_check_running(&mut app);
+    app.on_stream(failing("Missing sudo password"));
+    app.on_finished(ok(2));
+    assert!(app.password().is_none());
+}

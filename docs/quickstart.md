@@ -50,3 +50,10 @@ step "may be stale").
 
 State (`.dost/state/`) and run history (`.dost/history/`) stay local; `dost init` adds them to
 `.dost/.gitignore`. History stores statuses only, never messages, diffs or passwords.
+
+## When a run fails
+
+Keys on the failure screens: `r` retries the same step (a check or an apply), `p` retries and asks for
+the sudo password again. If sudo says the password is wrong or missing, `dost` forgets that password
+at once, so `r` already asks for a new one. A failed apply can be retried without typing the id again.
+Passwords with spaces at either end are refused (Ansible would strip them).
