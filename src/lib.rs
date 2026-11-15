@@ -7,3 +7,5 @@ pub mod secret;
 pub mod store;
 pub mod stream;
 pub mod summary;
+pub mod theme;
+pub mod widgets;
