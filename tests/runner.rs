@@ -23,6 +23,7 @@ fn cmd() -> Command {
         tags: vec![],
         extra_vars: vec![],
         apply_extra_vars: vec![],
+        focus: vec![],
         check: true,
         watch: vec![],
     }

@@ -5,12 +5,14 @@ mod graph;
 mod map;
 mod progress;
 mod table;
+mod tree;
 
 pub use chain::ChainWidget;
 pub use graph::GraphWidget;
 pub use map::{LinkState, MapLink, MapNode, MapWidget};
 pub use progress::ProgressWidget;
 pub use table::{Cell, TableWidget};
+pub use tree::{TreeNode, TreeWidget};
 
 use ratatui::buffer::Buffer;
 use ratatui::layout::Rect;
@@ -28,6 +30,8 @@ pub enum NodeStatus {
     Running,
     Ok,
     Failed,
+    /// Nothing is known about this node in this run.
+    Unknown,
 }
 
 impl NodeStatus {
@@ -37,12 +41,22 @@ impl NodeStatus {
             NodeStatus::Running => "⠹",
             NodeStatus::Ok => "✓",
             NodeStatus::Failed => "✗",
+            NodeStatus::Unknown => "·",
+        }
+    }
+
+    /// Like `glyph`, but a running node shows a spinner frame.
+    pub fn glyph_at(self, frame: u64) -> &'static str {
+        const SPINNER: [&str; 10] = ["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏"];
+        match self {
+            NodeStatus::Running => SPINNER[(frame % 10) as usize],
+            other => other.glyph(),
         }
     }
 
     pub fn style(self, theme: &Theme) -> Style {
         let c = match self {
-            NodeStatus::Pending => theme.pending,
+            NodeStatus::Pending | NodeStatus::Unknown => theme.pending,
             NodeStatus::Running => theme.running,
             NodeStatus::Ok => theme.ok,
             NodeStatus::Failed => theme.fail,

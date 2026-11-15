@@ -136,3 +136,19 @@ fn duplicate_command_ids_are_an_error() {
         "{problems:?}"
     );
 }
+
+#[test]
+fn focus_field_is_parsed() {
+    let dir = project(&[
+        ("playbooks/base.yml", "- hosts: all\n"),
+        (
+            ".dost/catalog/base.yml",
+            "id: base\ntitle: Base\nplaybook: playbooks/base.yml\nfocus: [bao, agent-stage]\n",
+        ),
+    ]);
+    let p = load_project(dir.path()).unwrap();
+    assert_eq!(
+        p.commands[0].focus,
+        vec!["bao".to_string(), "agent-stage".to_string()]
+    );
+}

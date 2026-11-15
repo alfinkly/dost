@@ -26,6 +26,7 @@ fn cmd(id: &str, about: &str, danger: Danger, become_: bool) -> Command {
         tags: vec![],
         extra_vars: vec![],
         apply_extra_vars: vec![],
+        focus: vec![],
         check: true,
         watch: vec![],
     }
@@ -416,4 +417,22 @@ fn password_with_edge_whitespace_is_refused() {
         app.handle_key(code(KeyCode::Enter)),
         Action::Start { .. }
     ));
+}
+
+#[test]
+fn focus_of_the_command_reaches_the_run_state_and_tick_advances_the_frame() {
+    let fx = Fixture::new();
+    let mut p = fx.project();
+    p.commands[0].focus = vec!["bao".into()];
+    let mut app = App::new(p, Store::open(fx.dir.path()));
+    app.handle_key(code(KeyCode::Down)); // base
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter)); // start check
+    assert_eq!(app.run_focus(), vec!["bao".to_string()]);
+    let f0 = app.run_frame();
+    app.tick();
+    app.tick();
+    assert_eq!(app.run_frame(), f0 + 2);
+    app.on_finished(ok(0));
+    assert!(app.run_finished(), "a finished run stops the spinner");
 }

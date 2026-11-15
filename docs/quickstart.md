@@ -44,7 +44,7 @@ Keys: `↑↓` choose, `Enter` open or confirm, `Tab` switch scene / log / raw o
    ```
 5. Make a playbook draw something: emit events, see [events.md](events.md).
 
-Other catalog fields: `after`, `inventory`, `limit`, `tags`, `extra_vars`, `check: false`
+Other catalog fields: `focus` (nodes of a `tree` scene the command works on), `after`, `inventory`, `limit`, `tags`, `extra_vars`, `check: false`
 (skip the check, with a visible warning), `watch: [globs]` (files whose change marks a chain
 step "may be stale").
 

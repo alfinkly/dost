@@ -64,6 +64,21 @@ pub fn validate_project(root: &Path) -> Vec<String> {
         Err(e) => out.push(e.to_string()),
         Ok(scenes) => {
             for cmd in &project.commands {
+                if let Some(ids) = cmd
+                    .scene
+                    .as_ref()
+                    .and_then(|s| scenes.get(s))
+                    .and_then(|s| s.tree_node_ids())
+                {
+                    for f in &cmd.focus {
+                        if !ids.contains(f) {
+                            out.push(format!(
+                                "command `{}`: focus `{f}` is not a node of its tree scene",
+                                cmd.id
+                            ));
+                        }
+                    }
+                }
                 if let Some(id) = &cmd.scene {
                     if !scenes.contains_key(id) {
                         out.push(format!(

@@ -9,13 +9,15 @@ use ratatui::layout::Rect;
 use ratatui::style::{Modifier, Style};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::Widget;
+use serde::Deserialize;
 use serde_json::{json, Value};
 
 use crate::catalog::{Project, SceneDef};
 use crate::stream::{RunMode, RunState};
 use crate::theme::Theme;
 use crate::widgets::{
-    Cell, ChainWidget, LinkState, MapLink, MapNode, MapWidget, NodeStatus, TableWidget,
+    Cell, ChainWidget, LinkState, MapLink, MapNode, MapWidget, NodeStatus, TableWidget, TreeNode,
+    TreeWidget,
 };
 
 pub use bind::{parse_path, resolve_path, BindError, Seg};
@@ -30,6 +32,8 @@ pub enum SceneError {
     Bind { id: String, source: BindError },
     #[error("scene `{id}`: table needs bind.rows")]
     MissingRows { id: String },
+    #[error("scene `{id}`: tree: {reason}")]
+    Tree { id: String, reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -38,6 +42,7 @@ enum Kind {
     Table,
     Map,
     Results,
+    Tree,
 }
 
 #[derive(Debug, Clone)]
@@ -45,6 +50,59 @@ pub struct Scene {
     def: SceneDef,
     kind: Kind,
     theme: Theme,
+    tree: Vec<TreeDef>,
+}
+
+#[derive(Debug, Clone, Deserialize)]
+struct TreeDef {
+    id: String,
+    label: String,
+    #[serde(default)]
+    parent: Option<String>,
+}
+
+fn parse_tree(def: &SceneDef) -> Result<Vec<TreeDef>, SceneError> {
+    let err = |reason: String| SceneError::Tree {
+        id: def.id.clone(),
+        reason,
+    };
+    let raw = def
+        .bind
+        .get("nodes")
+        .cloned()
+        .ok_or_else(|| err("needs bind.nodes".into()))?;
+    let nodes: Vec<TreeDef> =
+        serde_json::from_value(raw).map_err(|e| err(format!("bind.nodes: {e}")))?;
+    if nodes.is_empty() {
+        return Err(err("bind.nodes is empty".into()));
+    }
+    for (i, n) in nodes.iter().enumerate() {
+        if nodes[..i].iter().any(|o| o.id == n.id) {
+            return Err(err(format!("duplicate node id `{}`", n.id)));
+        }
+        if let Some(p) = &n.parent {
+            if !nodes.iter().any(|o| &o.id == p) {
+                return Err(err(format!("node `{}` has unknown parent `{p}`", n.id)));
+            }
+        }
+    }
+    for n in &nodes {
+        let mut cur = n;
+        for _ in 0..=nodes.len() {
+            match cur
+                .parent
+                .as_ref()
+                .and_then(|p| nodes.iter().find(|o| &o.id == p))
+            {
+                Some(next) => cur = next,
+                None => break,
+            }
+            if cur.id == n.id {
+                return Err(err(format!("node `{}` is its own ancestor", n.id)));
+            }
+        }
+    }
+    Ok(nodes)
 }
 
 fn bind_str<'a>(def: &'a SceneDef, key: &str) -> Option<&'a str> {
@@ -62,6 +120,7 @@ impl Scene {
             "table" => Kind::Table,
             "map" => Kind::Map,
             "results" => Kind::Results,
+            "tree" => Kind::Tree,
             other => {
                 return Err(SceneError::UnknownKind {
                     id: def.id.clone(),
@@ -85,15 +144,71 @@ impl Scene {
         if kind == Kind::Table && bind_str(def, "rows").is_none() {
             return Err(SceneError::MissingRows { id: def.id.clone() });
         }
+        let tree = if kind == Kind::Tree {
+            parse_tree(def)?
+        } else {
+            Vec::new()
+        };
         Ok(Scene {
             def: def.clone(),
             kind,
             theme,
+            tree,
         })
     }
 
     pub fn id(&self) -> &str {
         &self.def.id
+    }
+
+    /// The node ids of a `tree` scene; `None` for other kinds.
+    pub fn tree_node_ids(&self) -> Option<Vec<String>> {
+        (self.kind == Kind::Tree).then(|| self.tree.iter().map(|n| n.id.clone()).collect())
+    }
+
+    fn render_tree(&self, state: &RunState, area: Rect, buf: &mut Buffer) {
+        let nodes = self
+            .tree
+            .iter()
+            .map(|n| TreeNode {
+                id: n.id.clone(),
+                label: n.label.clone(),
+                parent: n.parent.clone(),
+                status: self.tree_status(state, &n.id),
+            })
+            .collect();
+        TreeWidget {
+            nodes,
+            frame: state.frame,
+            theme: self.theme.clone(),
+        }
+        .render(area, buf);
+    }
+
+    /// An event for the node wins; otherwise a focus node spins while the run lasts and is
+    /// checked or crossed when it ends; everything else is unknown.
+    fn tree_status(&self, state: &RunState, id: &str) -> NodeStatus {
+        for ((_, kind, key), data) in &state.events {
+            if kind == "node" && key == id {
+                return match data.get("state").and_then(Value::as_str) {
+                    Some("up") | Some("ok") => NodeStatus::Ok,
+                    Some("down") | Some("failed") => NodeStatus::Failed,
+                    Some("running") => NodeStatus::Running,
+                    Some("pending") => NodeStatus::Pending,
+                    _ => NodeStatus::Unknown,
+                };
+            }
+        }
+        if state.focus.iter().any(|f| f == id) {
+            return if !state.finished {
+                NodeStatus::Running
+            } else if state.any_failed() {
+                NodeStatus::Failed
+            } else {
+                NodeStatus::Ok
+            };
+        }
+        NodeStatus::Unknown
     }
 
     pub fn render(&self, state: &RunState, area: Rect, buf: &mut Buffer) {
@@ -116,6 +231,7 @@ impl Scene {
             Kind::Table => self.render_table(state, inner, buf),
             Kind::Map => self.render_map(state, inner, buf),
             Kind::Results => self.render_results(state, inner, buf),
+            Kind::Tree => self.render_tree(state, inner, buf),
         }
         if check {
             buf.set_style(inner, Style::default().add_modifier(Modifier::DIM));

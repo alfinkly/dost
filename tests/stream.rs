@@ -99,3 +99,25 @@ fn recap_updates_hosts() {
     assert!(st.hosts.contains(&"h".to_string()));
     assert_eq!(st.recap["h"].changed, 1);
 }
+
+#[test]
+fn recap_marks_the_run_finished_and_run_start_keeps_display_settings() {
+    let mut st = RunState {
+        focus: vec!["x".into()],
+        frame: 7,
+        ..Default::default()
+    };
+    st.apply(StreamLine::RunStart {
+        mode: RunMode::Check,
+    });
+    assert!(!st.finished);
+    assert_eq!((st.focus.clone(), st.frame), (vec!["x".to_string()], 7));
+    st.apply(StreamLine::Recap {
+        host: "h".into(),
+        ok: 1,
+        changed: 0,
+        failed: 0,
+        unreachable: 0,
+    });
+    assert!(st.finished);
+}

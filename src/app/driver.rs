@@ -116,7 +116,7 @@ pub async fn run(project: Project, store: Store, start: Option<&str>) -> Result<
                 let _ = tokio::time::timeout(Duration::from_secs(6), done_rx.recv()).await;
                 break;
             }
-            _ = tick.tick() => {}
+            _ = tick.tick() => app.tick(),
         }
     }
     cancel.cancel();

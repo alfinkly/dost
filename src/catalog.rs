@@ -33,6 +33,8 @@ pub struct Command {
     pub extra_vars: Vec<String>,
     /// Extra vars added only to the apply run (e.g. a `confirm=yes` guard that a check must not get).
     pub apply_extra_vars: Vec<String>,
+    /// Ids of the nodes of a `tree` scene this command works on; they spin while it runs.
+    pub focus: Vec<String>,
     pub check: bool,
     pub watch: Vec<String>,
 }
@@ -142,6 +144,8 @@ struct RawCommand {
     extra_vars: Vec<String>,
     #[serde(default)]
     apply_extra_vars: Vec<String>,
+    #[serde(default)]
+    focus: Vec<String>,
     #[serde(default = "yes")]
     check: bool,
     #[serde(default)]
@@ -260,6 +264,7 @@ pub fn load_project(root: &Path) -> Result<Project, CatalogError> {
                     tags: raw.tags,
                     extra_vars: raw.extra_vars,
                     apply_extra_vars: raw.apply_extra_vars,
+                    focus: raw.focus,
                     check: raw.check,
                     watch: raw.watch,
                 },

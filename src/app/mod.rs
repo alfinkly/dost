@@ -221,6 +221,8 @@ impl App {
     fn start(&mut self, mode: RunMode) -> Action {
         self.state = RunState {
             mode,
+            focus: self.command().focus.clone(),
+            frame: self.state.frame,
             ..RunState::default()
         };
         self.running_mode = mode;
@@ -431,6 +433,23 @@ impl App {
         }
     }
 
+    /// Advance the animation by one frame (called on every UI tick).
+    pub fn tick(&mut self) {
+        self.state.frame = self.state.frame.wrapping_add(1);
+    }
+
+    pub fn run_focus(&self) -> Vec<String> {
+        self.state.focus.clone()
+    }
+
+    pub fn run_frame(&self) -> u64 {
+        self.state.frame
+    }
+
+    pub fn run_finished(&self) -> bool {
+        self.state.finished
+    }
+
     pub fn on_stream(&mut self, line: StreamLine) {
         self.state.apply(line);
     }
@@ -446,6 +465,7 @@ impl App {
             self.message = Some("Run cancelled.".into());
             return;
         }
+        self.state.finished = true;
         self.last_exit = outcome.exit_code;
         self.last_tail = outcome.output_tail;
         let cmd_id = self.command().id.clone();

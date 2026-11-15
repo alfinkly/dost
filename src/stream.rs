@@ -144,6 +144,12 @@ pub struct TaskResultRec {
 #[derive(Debug, Clone, Default)]
 pub struct RunState {
     pub mode: RunMode,
+    /// Tree nodes the command works on (set by the app, kept across `RunStart`).
+    pub focus: Vec<String>,
+    /// Animation frame, advanced by the app on every tick.
+    pub frame: u64,
+    /// True once Ansible printed its recap (or the app saw the process end).
+    pub finished: bool,
     pub hosts: Vec<String>,
     pub tasks: Vec<String>,
     pub results: Vec<TaskResultRec>,
@@ -164,6 +170,8 @@ impl RunState {
             StreamLine::RunStart { mode } => {
                 *self = RunState {
                     mode,
+                    focus: std::mem::take(&mut self.focus),
+                    frame: self.frame,
                     ..RunState::default()
                 };
             }
@@ -210,6 +218,7 @@ impl RunState {
                 unreachable,
             } => {
                 self.see_host(&host);
+                self.finished = true;
                 self.recap.insert(
                     host,
                     Recap {

@@ -214,3 +214,81 @@ fn theme_reads_colours_from_catalog_with_fallback() {
     assert_eq!(t.ok, ratatui::style::Color::Blue);
     assert_eq!(t.fail, Theme::default().fail);
 }
+
+use dost::widgets::{TreeNode, TreeWidget};
+
+fn tnode(id: &str, parent: Option<&str>, st: NodeStatus) -> TreeNode {
+    TreeNode {
+        id: id.into(),
+        label: id.into(),
+        parent: parent.map(String::from),
+        status: st,
+    }
+}
+
+fn sample_tree(frame: u64, agent: NodeStatus) -> TreeWidget {
+    TreeWidget {
+        nodes: vec![
+            tnode("openbao", None, NodeStatus::Ok),
+            tnode("hero", Some("openbao"), NodeStatus::Unknown),
+            tnode("agent-stage", Some("hero"), NodeStatus::Ok),
+            tnode("agent-prod", Some("hero"), agent),
+            tnode("mail", Some("openbao"), NodeStatus::Pending),
+        ],
+        frame,
+        theme: Theme::default(),
+    }
+}
+
+#[test]
+fn tree_draws_connectors_hierarchy_and_status_glyphs() {
+    let t = text(&render(sample_tree(0, NodeStatus::Failed), 60, 10));
+    let lines: Vec<&str> = t.lines().collect();
+    assert!(
+        lines[0].contains("openbao") && lines[0].contains('✓'),
+        "{t}"
+    );
+    assert!(
+        lines[1].starts_with("├─") && lines[1].contains("hero"),
+        "{t}"
+    );
+    assert!(
+        lines[2].starts_with("│  ├─") && lines[2].contains("agent-stage"),
+        "{t}"
+    );
+    assert!(
+        lines[3].starts_with("│  └─") && lines[3].contains('✗'),
+        "{t}"
+    );
+    assert!(
+        lines[4].starts_with("└─") && lines[4].contains("mail") && lines[4].contains('○'),
+        "{t}"
+    );
+    assert!(t.contains('·'), "unknown status is a dot:\n{t}");
+}
+
+#[test]
+fn tree_spinner_changes_with_the_frame() {
+    let a = text(&render(sample_tree(0, NodeStatus::Running), 60, 10));
+    let b = text(&render(sample_tree(3, NodeStatus::Running), 60, 10));
+    assert_ne!(a, b, "a running node must animate");
+    let still_a = text(&render(sample_tree(0, NodeStatus::Ok), 60, 10));
+    let still_b = text(&render(sample_tree(3, NodeStatus::Ok), 60, 10));
+    assert_eq!(still_a, still_b, "finished nodes must not animate");
+}
+
+#[test]
+fn tree_clips_in_a_tiny_area_without_panicking() {
+    let _ = render(sample_tree(1, NodeStatus::Running), 6, 2);
+    let _ = render(sample_tree(1, NodeStatus::Running), 0, 0);
+}
+
+#[test]
+fn tree_with_unknown_parent_shows_the_node_at_the_top() {
+    let w = TreeWidget {
+        nodes: vec![tnode("orphan", Some("missing"), NodeStatus::Ok)],
+        frame: 0,
+        theme: Theme::default(),
+    };
+    assert!(text(&render(w, 30, 3)).contains("orphan"));
+}

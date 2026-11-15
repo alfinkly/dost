@@ -5,7 +5,7 @@ A scene is a YAML file in `.dost/scenes/<id>.yml`. A scene with the id of a buil
 
 ```yaml
 id: firewall
-use: table                      # chain | table | map | results
+use: table                      # chain | table | map | results | tree
 title: Firewall
 bind:
   columns: [port, was, now]
@@ -20,6 +20,22 @@ bind:
 - `map`: hosts in a row joined by links. `links` (default `event.link[*]`) is a path to link
   objects `{a, b, state}`.
 - `results`: the tasks that changed something.
+- `tree`: a fixed hierarchy drawn top-down, the same picture for every playbook that uses it.
+  The structure is yours, in `bind.nodes` (`id`, `label`, optional `parent`; ids are unique, parents must exist, no cycles).
+  A command declares which nodes it works on with `focus: [id, ...]` in the catalog: those nodes
+  spin while the run lasts and become ✓ or ✗ when it ends. A `node` event
+  (`key` = node id, `state: up|down|running|pending`) sets any node's status and wins over `focus`.
+  Nodes nothing is known about are shown as `·`.
+
+  ```yaml
+  id: secrets
+  use: tree
+  bind:
+    nodes:
+      - { id: bao,   label: OpenBao }
+      - { id: hero,  label: opkit-hero, parent: bao }
+      - { id: agent, label: "bao-agent@stage", parent: hero }
+  ```
 
 ## Binding paths
 Evaluated per host against `{ host, event: { <kind>: <payload> } }`. A keyed event is nested

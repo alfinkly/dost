@@ -181,3 +181,117 @@ fn chain_scene_shows_task_status() {
     let t = draw(&scenes["chain"], &st);
     assert!(t.contains("✓ one") && t.contains("✗ two"), "{t}");
 }
+
+fn tree_def(extra: &str) -> SceneDef {
+    serde_yaml_ng::from_str(&format!(
+        "id: secrets\nuse: tree\nbind:\n  nodes:\n    - {{ id: bao, label: OpenBao }}\n    - {{ id: hero, label: opkit-hero, parent: bao }}\n    - {{ id: agent-stage, label: 'bao-agent@stage', parent: hero }}\n    - {{ id: agent-prod, label: 'bao-agent@prod', parent: hero }}\n{extra}"
+    ))
+    .unwrap()
+}
+
+fn tree_scene() -> Scene {
+    load_scenes(&project(vec![tree_def("")]))
+        .unwrap()
+        .remove("secrets")
+        .unwrap()
+}
+
+#[test]
+fn tree_scene_spins_the_focus_node_while_running_and_checks_it_after() {
+    let scene = tree_scene();
+    let mut st = RunState {
+        focus: vec!["bao".into()],
+        ..Default::default()
+    };
+    st.apply(StreamLine::RunStart {
+        mode: RunMode::Apply,
+    });
+    assert_eq!(
+        st.focus,
+        vec!["bao".to_string()],
+        "focus survives the run start"
+    );
+    st.apply(result("circle-ops", "install", true, false));
+    let running = draw(&scene, &st);
+    assert!(
+        running.contains("OpenBao") && running.contains("bao-agent@stage"),
+        "{running}"
+    );
+    assert!(
+        !running.contains('✓'),
+        "a running node must not be checked yet:\n{running}"
+    );
+    st.apply(StreamLine::Recap {
+        host: "circle-ops".into(),
+        ok: 1,
+        changed: 1,
+        failed: 0,
+        unreachable: 0,
+    });
+    let done = draw(&scene, &st);
+    assert!(done.lines().next().unwrap().contains('✓'), "{done}");
+}
+
+#[test]
+fn tree_scene_marks_failed_focus_node() {
+    let scene = tree_scene();
+    let mut st = RunState {
+        focus: vec!["agent-prod".into()],
+        ..Default::default()
+    };
+    st.apply(result("opkit-hero", "render", false, true));
+    st.apply(StreamLine::Recap {
+        host: "opkit-hero".into(),
+        ok: 0,
+        changed: 0,
+        failed: 1,
+        unreachable: 0,
+    });
+    let t = draw(&scene, &st);
+    let line = t.lines().find(|l| l.contains("bao-agent@prod")).unwrap();
+    assert!(line.contains('✗'), "{t}");
+}
+
+#[test]
+fn tree_scene_event_status_overrides_and_unknown_nodes_are_dots() {
+    let scene = tree_scene();
+    let mut st = RunState::default();
+    st.apply(result("opkit-hero", "t", false, false));
+    st.apply(event(
+        "opkit-hero",
+        "node",
+        Some("agent-stage"),
+        json!({"state": "up"}),
+    ));
+    st.apply(event(
+        "opkit-hero",
+        "node",
+        Some("agent-prod"),
+        json!({"state": "down"}),
+    ));
+    let t = draw(&scene, &st);
+    let stage = t.lines().find(|l| l.contains("bao-agent@stage")).unwrap();
+    let prod = t.lines().find(|l| l.contains("bao-agent@prod")).unwrap();
+    assert!(stage.contains('✓') && prod.contains('✗'), "{t}");
+    let hero = t.lines().find(|l| l.contains("opkit-hero")).unwrap();
+    assert!(
+        hero.contains('·'),
+        "no information about hero: a dot, not a tick:\n{t}"
+    );
+}
+
+#[test]
+fn tree_scene_rejects_bad_definitions_at_load() {
+    let no_nodes: SceneDef = serde_yaml_ng::from_str("id: t\nuse: tree\n").unwrap();
+    assert!(Scene::from_def(&no_nodes).is_err());
+    let bad_parent: SceneDef = serde_yaml_ng::from_str(
+        "id: t\nuse: tree\nbind:\n  nodes:\n    - { id: a, label: A, parent: ghost }\n",
+    )
+    .unwrap();
+    assert!(Scene::from_def(&bad_parent).is_err());
+    let dup: SceneDef = serde_yaml_ng::from_str(
+        "id: t\nuse: tree\nbind:\n  nodes:\n    - { id: a, label: A }\n    - { id: a, label: B }\n",
+    )
+    .unwrap();
+    assert!(Scene::from_def(&dup).is_err());
+}

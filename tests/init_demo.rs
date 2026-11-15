@@ -172,3 +172,28 @@ fn doctor_reports_fill_in_placeholders() {
         "{problems:?}"
     );
 }
+
+#[test]
+fn doctor_reports_focus_ids_missing_from_the_tree_scene() {
+    let d = TempDir::new().unwrap();
+    fs::create_dir_all(d.path().join(".dost/catalog")).unwrap();
+    fs::create_dir_all(d.path().join(".dost/scenes")).unwrap();
+    fs::create_dir_all(d.path().join("playbooks")).unwrap();
+    fs::write(d.path().join("playbooks/p.yml"), "- hosts: all\n").unwrap();
+    fs::write(
+        d.path().join(".dost/scenes/secrets.yml"),
+        "id: secrets\nuse: tree\nbind:\n  nodes:\n    - { id: bao, label: OpenBao }\n",
+    )
+    .unwrap();
+    fs::write(
+        d.path().join(".dost/catalog/p.yml"),
+        "id: p\ntitle: P\nplaybook: playbooks/p.yml\nscene: secrets\nfocus: [bao, nope]\n",
+    )
+    .unwrap();
+    let problems = validate_project(d.path());
+    assert!(problems.iter().any(|p| p.contains("nope")), "{problems:?}");
+    assert!(
+        !problems.iter().any(|p| p.contains("`bao`")),
+        "{problems:?}"
+    );
+}
