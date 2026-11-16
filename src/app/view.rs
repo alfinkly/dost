@@ -219,16 +219,7 @@ fn running(app: &App, f: &mut Frame, area: Rect) {
         tabs,
     );
     match app.tab {
-        Tab::Scene => {
-            let id = app
-                .command()
-                .scene
-                .clone()
-                .unwrap_or_else(|| "chain".into());
-            if let Some(scene) = app.scenes.get(&id).or_else(|| app.scenes.get("chain")) {
-                scene.render(&app.state, content, f.buffer_mut());
-            }
-        }
+        Tab::Scene => draw_scene(app, f, content),
         Tab::Log => {
             let lines: Vec<Line> = app
                 .state
@@ -259,6 +250,39 @@ fn running(app: &App, f: &mut Frame, area: Rect) {
             f.render_widget(Paragraph::new(text).wrap(Wrap { trim: false }), content);
         }
     }
+}
+
+fn draw_scene(app: &App, f: &mut Frame, area: Rect) {
+    let id = app
+        .command()
+        .scene
+        .clone()
+        .unwrap_or_else(|| "chain".into());
+    if let Some(scene) = app.scenes.get(&id).or_else(|| app.scenes.get("chain")) {
+        scene.render(&app.state, area, f.buffer_mut());
+    }
+}
+
+/// The scene of the finished run stays on screen; `lines` go in a panel under it.
+fn scene_with_panel(app: &App, f: &mut Frame, area: Rect, lines: Vec<Line<'static>>) {
+    let want = (lines.len() as u16 + 1).max(6);
+    let panel_h = want.min(area.height / 2).max(4);
+    let [top, panel] =
+        Layout::vertical([Constraint::Min(3), Constraint::Length(panel_h)]).areas(area);
+    draw_scene(app, f, top);
+    f.render_widget(
+        Paragraph::new(lines).wrap(Wrap { trim: false }),
+        Rect::new(
+            panel.x,
+            panel.y + 1,
+            panel.width,
+            panel.height.saturating_sub(1),
+        ),
+    );
+    f.render_widget(
+        Paragraph::new("─".repeat(panel.width as usize)).style(dim()),
+        Rect::new(panel.x, panel.y, panel.width, 1),
+    );
 }
 
 fn apply_confirm(app: &App, f: &mut Frame, area: Rect) {
@@ -350,7 +374,7 @@ fn check_failed(app: &App, f: &mut Frame, area: Rect) {
         lines.push(Line::raw(""));
     }
     lines.extend(failure_lines(app));
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    scene_with_panel(app, f, area, lines);
 }
 
 fn result(app: &App, f: &mut Frame, area: Rect) {
@@ -377,7 +401,7 @@ fn result(app: &App, f: &mut Frame, area: Rect) {
         lines.push(Line::raw(""));
         lines.extend(failure_lines(app));
     }
-    f.render_widget(Paragraph::new(lines).wrap(Wrap { trim: false }), area);
+    scene_with_panel(app, f, area, lines);
 }
 
 fn help_confirm(app: &App, f: &mut Frame, area: Rect) {

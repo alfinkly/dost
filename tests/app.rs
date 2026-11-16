@@ -876,3 +876,22 @@ fn h_does_nothing_on_a_successful_result_and_is_offered_after_a_failed_apply() {
     assert!(matches!(app.handle_key(key('h')), Action::None));
     assert_eq!(app.screen_kind(), ScreenKind::HelpConfirm);
 }
+
+#[test]
+fn failed_run_keeps_the_scene_and_shows_the_error_under_it() {
+    let fx = Fixture::new();
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down));
+    app.handle_key(code(KeyCode::Enter));
+    app.handle_key(code(KeyCode::Enter));
+    app.on_stream(StreamLine::RunStart {
+        mode: RunMode::Check,
+    });
+    app.on_stream(result("h", true, Some("boom")));
+    app.on_finished(ok(2));
+    assert_eq!(app.screen_kind(), ScreenKind::CheckFailed);
+    let s = screen(&app);
+    assert!(s.contains("✗"), "the failed link stays on screen:\n{s}");
+    assert!(s.contains("boom"), "the error is described:\n{s}");
+    assert!(s.contains("Check failed"), "{s}");
+}

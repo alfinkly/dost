@@ -339,7 +339,7 @@ impl Scene {
             .results
             .iter()
             .any(|r| play.is_match(&r.play) && (r.failed || r.unreachable));
-        if failed {
+        if failed || (state.finished && state.any_failed() && play.is_match(&state.current_play)) {
             NodeStatus::Failed
         } else if play.is_match(&state.current_play) && !state.finished {
             NodeStatus::Running
@@ -659,7 +659,7 @@ impl Scene {
             Kind::Report => self.render_report(state, inner, buf),
             Kind::Transfer => self.render_transfer(state, inner, buf),
         }
-        if check {
+        if check && !state.any_failed() {
             buf.set_style(inner, Style::default().add_modifier(Modifier::DIM));
         }
     }
