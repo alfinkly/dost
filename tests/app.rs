@@ -895,3 +895,25 @@ fn failed_run_keeps_the_scene_and_shows_the_error_under_it() {
     assert!(s.contains("boom"), "the error is described:\n{s}");
     assert!(s.contains("Check failed"), "{s}");
 }
+
+#[test]
+fn catalog_edits_apply_to_the_next_run_without_restarting() {
+    let fx = Fixture::new();
+    let cat = fx.dir.path().join(".dost/catalog");
+    std::fs::create_dir_all(&cat).unwrap();
+    let write = |title: &str| {
+        std::fs::write(
+            cat.join("base.yml"),
+            format!("id: base\ntitle: {title}\nplaybook: playbooks/base.yml\nabout: x\ndanger: low\n"),
+        )
+        .unwrap();
+    };
+    write("Before");
+    let mut app = fx.app();
+    app.handle_key(code(KeyCode::Down)); // base
+    app.handle_key(code(KeyCode::Enter));
+    write("After");
+    app.handle_key(code(KeyCode::Enter)); // start the check
+    assert_eq!(app.screen_kind(), ScreenKind::Running);
+    assert!(screen(&app).contains("After"), "{}", screen(&app));
+}

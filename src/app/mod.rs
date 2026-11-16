@@ -490,7 +490,38 @@ impl App {
         self.start(mode)
     }
 
+    /// Read the catalog, scenes and known errors from disk again, so edits made between runs
+    /// (a fixed playbook hint, a new scene) apply without restarting dost.
+    fn reload_project(&mut self) -> Option<String> {
+        let id = self.command().id.clone();
+        let project = match crate::catalog::load_project(&self.project.root) {
+            Ok(p) => p,
+            Err(e) => return Some(format!("Catalog not reloaded, using the old one: {e}")),
+        };
+        let Some(cur) = project.commands.iter().position(|c| c.id == id) else {
+            return Some(format!(
+                "Catalog not reloaded: `{id}` is no longer in it, using the old one."
+            ));
+        };
+        let (scenes, problem) = match load_scenes(&project) {
+            Ok(s) => (s, None),
+            Err(e) => (
+                load_builtin_scenes(&project),
+                Some(format!("Scene problem: {e}. Using the built-in scenes.")),
+            ),
+        };
+        let mut items: Vec<MenuItem> = (0..project.chains.len()).map(MenuItem::Chain).collect();
+        items.extend((0..project.commands.len()).map(MenuItem::Command));
+        self.selected = self.selected.min(items.len().saturating_sub(1));
+        self.items = items;
+        self.project = project;
+        self.scenes = scenes;
+        self.cur = Some(cur);
+        problem
+    }
+
     fn start(&mut self, mode: RunMode) -> Action {
+        let reload_problem = self.reload_project();
         self.state = RunState {
             mode,
             focus: self.command().focus.clone(),
@@ -498,7 +529,7 @@ impl App {
             ..RunState::default()
         };
         self.running_mode = mode;
-        self.message = None;
+        self.message = reload_problem;
         self.screen = ScreenKind::Running;
         self.tab = Tab::Scene;
         self.error = None;
