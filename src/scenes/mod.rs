@@ -140,6 +140,15 @@ struct Report {
     sections: Vec<Section>,
 }
 
+/// Ansible names the tasks of a role `role : task`; a rule written for the plain task name must
+/// match both spellings.
+fn task_matches(rule: &Regex, task: &str) -> bool {
+    rule.is_match(task)
+        || task
+            .split_once(" : ")
+            .is_some_and(|(_, plain)| rule.is_match(plain))
+}
+
 fn parse_report(def: &SceneDef) -> Result<Report, SceneError> {
     let err = |reason: String| SceneError::Report {
         id: def.id.clone(),
@@ -362,14 +371,14 @@ impl Scene {
             let items: Vec<_> = state
                 .items
                 .iter()
-                .filter(|i| rule.task.is_match(&i.task) && allowed(&i.host))
+                .filter(|i| task_matches(&rule.task, &i.task) && allowed(&i.host))
                 .collect();
             let mut found: Vec<(String, String, RowState)> = Vec::new();
             if items.is_empty() {
                 for r in state
                     .results
                     .iter()
-                    .filter(|r| rule.task.is_match(&r.task) && allowed(&r.host))
+                    .filter(|r| task_matches(&rule.task, &r.task) && allowed(&r.host))
                 {
                     found.push((
                         r.host.clone(),

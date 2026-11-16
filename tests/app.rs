@@ -25,6 +25,7 @@ fn cmd(id: &str, about: &str, danger: Danger, become_: bool) -> Command {
         limit: None,
         tags: vec![],
         extra_vars: vec![],
+        remote_user: None,
         apply_extra_vars: vec![],
         focus: vec![],
         check: true,
@@ -904,7 +905,9 @@ fn catalog_edits_apply_to_the_next_run_without_restarting() {
     let write = |title: &str| {
         std::fs::write(
             cat.join("base.yml"),
-            format!("id: base\ntitle: {title}\nplaybook: playbooks/base.yml\nabout: x\ndanger: low\n"),
+            format!(
+                "id: base\ntitle: {title}\nplaybook: playbooks/base.yml\nabout: x\ndanger: low\n"
+            ),
         )
         .unwrap();
     };

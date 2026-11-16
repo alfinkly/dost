@@ -702,3 +702,16 @@ fn transfer_scene_strips_prefixes_from_from_and_to() {
     );
     assert!(!row.contains("kv/opkit/"), "{row}");
 }
+
+#[test]
+fn report_rules_match_tasks_of_a_role_by_their_plain_name() {
+    let scene = report_scene();
+    let mut st = RunState::default();
+    st.apply(StreamLine::Play {
+        name: "Admin users".into(),
+    });
+    // Ansible names the tasks of a role "role : task".
+    st.apply(item("n4", "users : Admin accounts", "alice", true, false));
+    let t = draw_report(&scene, &st);
+    assert!(t.contains("alice") && t.contains("created"), "{t}");
+}

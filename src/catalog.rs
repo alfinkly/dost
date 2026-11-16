@@ -31,6 +31,9 @@ pub struct Command {
     pub limit: Option<String>,
     pub tags: Vec<String>,
     pub extra_vars: Vec<String>,
+    /// `-u`: the SSH user for this run. Unlike `-e ansible_user=`, the inventory still wins for
+    /// hosts that define their own user, so peers of the node keep theirs.
+    pub remote_user: Option<String>,
     /// Extra vars added only to the apply run (e.g. a `confirm=yes` guard that a check must not get).
     pub apply_extra_vars: Vec<String>,
     /// Ids of the nodes of a `tree` scene this command works on; they spin while it runs.
@@ -142,6 +145,8 @@ struct RawCommand {
     tags: Vec<String>,
     #[serde(default)]
     extra_vars: Vec<String>,
+    #[serde(default)]
+    remote_user: Option<String>,
     #[serde(default)]
     apply_extra_vars: Vec<String>,
     #[serde(default)]
@@ -263,6 +268,7 @@ pub fn load_project(root: &Path) -> Result<Project, CatalogError> {
                     limit: raw.limit,
                     tags: raw.tags,
                     extra_vars: raw.extra_vars,
+                    remote_user: raw.remote_user,
                     apply_extra_vars: raw.apply_extra_vars,
                     focus: raw.focus,
                     check: raw.check,

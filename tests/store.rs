@@ -19,6 +19,7 @@ fn cmd(watch: Vec<&str>) -> Command {
         limit: None,
         tags: vec![],
         extra_vars: vec![],
+        remote_user: None,
         apply_extra_vars: vec![],
         focus: vec![],
         check: true,

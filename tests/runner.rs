@@ -22,6 +22,7 @@ fn cmd() -> Command {
         limit: None,
         tags: vec![],
         extra_vars: vec![],
+        remote_user: None,
         apply_extra_vars: vec![],
         focus: vec![],
         check: true,
@@ -78,6 +79,21 @@ fn catalog_fields_map_to_flags() {
         joined.contains("-e x=1") && joined.contains("-e y=2"),
         "{joined}"
     );
+}
+
+#[test]
+fn remote_user_maps_to_dash_u_not_an_extra_var() {
+    let mut c = cmd();
+    c.remote_user = Some("client_19_1".into());
+    let a = args(&build_plan(
+        Path::new("/p"),
+        &c,
+        RunMode::Check,
+        Path::new("/cb"),
+    ));
+    let joined = a.join(" ");
+    assert!(joined.contains("-u client_19_1"), "{joined}");
+    assert!(!joined.contains("ansible_user"), "{joined}");
 }
 
 #[test]

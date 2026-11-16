@@ -116,6 +116,9 @@ pub fn build_plan(root: &Path, cmd: &Command, mode: RunMode, plugin_dir: &Path) 
     if !cmd.tags.is_empty() {
         argv.extend(["--tags".into(), cmd.tags.join(",").into()]);
     }
+    if let Some(u) = &cmd.remote_user {
+        argv.extend(["-u".into(), u.into()]);
+    }
     for v in &cmd.extra_vars {
         argv.extend(["-e".into(), v.into()]);
     }
