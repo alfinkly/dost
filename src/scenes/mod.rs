@@ -1,6 +1,7 @@
 //! Level-2 scenes: YAML definitions that turn a `RunState` into a picture built from widgets.
 
 mod bind;
+mod matrix;
 
 use std::collections::BTreeMap;
 
@@ -39,6 +40,8 @@ pub enum SceneError {
     Steps { id: String, reason: String },
     #[error("scene `{id}`: report: {reason}")]
     Report { id: String, reason: String },
+    #[error("scene `{id}`: matrix: {reason}")]
+    Matrix { id: String, reason: String },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -49,6 +52,7 @@ enum Kind {
     Results,
     Tree,
     Report,
+    Matrix,
     Transfer,
 }
 
@@ -60,6 +64,7 @@ pub struct Scene {
     tree: Vec<TreeDef>,
     steps: Vec<StepDef>,
     report: Option<Report>,
+    matrix: Option<matrix::Matrix>,
 }
 
 #[derive(Debug, Clone, Deserialize)]
@@ -290,6 +295,7 @@ impl Scene {
             "results" => Kind::Results,
             "tree" => Kind::Tree,
             "report" => Kind::Report,
+            "matrix" => Kind::Matrix,
             "transfer" => Kind::Transfer,
             other => {
                 return Err(SceneError::UnknownKind {
@@ -300,7 +306,7 @@ impl Scene {
         };
         if let Some(obj) = def.bind.as_object() {
             for (k, v) in obj {
-                if k == "columns" {
+                if k == "columns" || k == "row_title" {
                     continue;
                 }
                 if let Some(path) = v.as_str() {
@@ -329,6 +335,11 @@ impl Scene {
         } else {
             None
         };
+        let matrix = if kind == Kind::Matrix {
+            Some(matrix::parse_matrix(def)?)
+        } else {
+            None
+        };
         Ok(Scene {
             def: def.clone(),
             kind,
@@ -336,6 +347,7 @@ impl Scene {
             tree,
             steps,
             report,
+            matrix,
         })
     }
 
@@ -357,6 +369,23 @@ impl Scene {
         } else {
             NodeStatus::Pending
         }
+    }
+
+    /// The `Users ─▶ wg1 ─▶ ...` header: one link per stage, with the state of its play.
+    fn stage_spans(&self, state: &RunState, stages: &[(Regex, String)]) -> Vec<Span<'static>> {
+        let mut spans: Vec<Span> = Vec::new();
+        for (i, (play, label)) in stages.iter().enumerate() {
+            if i > 0 {
+                spans.push(Span::raw(" ─▶ "));
+            }
+            let st = self.stage_status(state, play);
+            spans.push(Span::styled(
+                st.glyph_at(state.frame),
+                st.style(&self.theme),
+            ));
+            spans.push(Span::raw(format!(" {label}")));
+        }
+        spans
     }
 
     fn report_rows(&self, state: &RunState, section: &Section) -> Vec<Row> {
@@ -431,18 +460,7 @@ impl Scene {
         if area.height == 0 {
             return;
         }
-        let mut spans: Vec<Span> = Vec::new();
-        for (i, (play, label)) in report.stages.iter().enumerate() {
-            if i > 0 {
-                spans.push(Span::raw(" ─▶ "));
-            }
-            let st = self.stage_status(state, play);
-            spans.push(Span::styled(
-                st.glyph_at(state.frame),
-                st.style(&self.theme),
-            ));
-            spans.push(Span::raw(format!(" {label}")));
-        }
+        let spans = self.stage_spans(state, &report.stages);
         if !spans.is_empty() {
             buf.set_line(area.x, area.y, &Line::from(spans), area.width);
         }
@@ -666,6 +684,7 @@ impl Scene {
             Kind::Results => self.render_results(state, inner, buf),
             Kind::Tree => self.render_tree(state, inner, buf),
             Kind::Report => self.render_report(state, inner, buf),
+            Kind::Matrix => self.render_matrix(state, inner, buf),
             Kind::Transfer => self.render_transfer(state, inner, buf),
         }
         if check && !state.any_failed() {

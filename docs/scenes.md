@@ -5,7 +5,7 @@ A scene is a YAML file in `.dost/scenes/<id>.yml`. A scene with the id of a buil
 
 ```yaml
 id: firewall
-use: table                      # chain | table | map | results | tree
+use: table                      # chain | table | map | results | tree | report | matrix | transfer
 title: Firewall
 bind:
   columns: [port, was, now]
@@ -57,6 +57,24 @@ bind:
   A rule that matches loop items makes one row per item, otherwise one row per task result. With
   `focus: [host, ...]` in the catalog only those hosts' rows are shown (the others are hidden, which
   matters for plays that run on every node); when several hosts remain, rows get a `host:` prefix.
+- `matrix`: **who got what.** The things a loop walks over (people, hosts) are the rows, the steps
+  of the run are the columns, one cell per row and step. No events needed: it reads loop-item results.
+  A cell is `+` changed, `✓` already there, `✗` failed, `–` skipped, `·` nothing reported; when the task
+  ran on several hosts it adds `n/m` (hosts in that state out of all hosts the task touched). The last
+  column sums the row up. `missing` on a column names every row that has no result in it although the
+  column's task has run, and is printed under the table as `! row: text`. `stages` is the same header of
+  plays as in `report`; `row_title` is the header of the first column.
+  ```yaml
+  id: access
+  use: matrix
+  bind:
+    row_title: Person
+    stages:
+      - { play: "^Accounts", label: Accounts }
+    columns:
+      - { label: Account, task: "^People accounts$" }
+      - { label: Key, task: "^People SSH keys", missing: "no SSH key in GitLab" }
+  ```
 - `transfer`: things moving from one place to another, one row per `transfer` event, in the order
   they first arrived: `label  from  ──▶  to  detail`. A running row without a total shows a packet
   crossing the arrow; with `done` and `total` (bytes) it shows a filled bar and `120.0 MB / 480.0 MB`;

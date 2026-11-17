@@ -715,3 +715,94 @@ fn report_rules_match_tasks_of_a_role_by_their_plain_name() {
     let t = draw_report(&scene, &st);
     assert!(t.contains("alice") && t.contains("created"), "{t}");
 }
+
+const MATRIX: &str = r#"
+id: access
+use: matrix
+bind:
+  row_title: Person
+  stages:
+    - { play: "^Accounts", label: Accounts }
+    - { play: "^VPN", label: VPN }
+  columns:
+    - { label: Account, task: "^People accounts$" }
+    - { label: Key, task: "^People SSH keys", missing: "no SSH key in GitLab" }
+    - { label: VPN, task: "^VPN peers" }
+"#;
+
+fn matrix_scene() -> Scene {
+    let def: SceneDef = serde_yaml_ng::from_str(MATRIX).unwrap();
+    load_scenes(&project(vec![def]))
+        .unwrap()
+        .remove("access")
+        .unwrap()
+}
+
+#[test]
+fn matrix_scene_has_a_row_per_person_and_a_cell_per_step() {
+    let scene = matrix_scene();
+    let mut st = RunState::default();
+    st.apply(StreamLine::Play {
+        name: "Accounts of the people".into(),
+    });
+    for h in ["n1", "n2"] {
+        st.apply(item(h, "People accounts", "dauletkhan", false, false));
+        st.apply(item(h, "People accounts", "didar", true, false));
+        st.apply(item(
+            h,
+            "People SSH keys (exactly the GitLab ones)",
+            "dauletkhan",
+            false,
+            false,
+        ));
+    }
+    st.apply(item("n1", "VPN peers of the people", "didar", true, false));
+    let t = draw_report(&scene, &st);
+    let row = |n: &str| {
+        t.lines()
+            .find(|l| l.starts_with(n))
+            .unwrap_or("")
+            .to_string()
+    };
+    assert!(
+        t.contains("Person") && t.contains("Account") && t.contains("Key"),
+        "{t}"
+    );
+    assert!(row("dauletkhan").contains("✓ 2/2"), "{t}");
+    assert!(
+        row("didar").contains("+ 2/2") && row("didar").contains("изменён"),
+        "{t}"
+    );
+    assert!(row("didar").contains('·'), "{t}");
+    assert!(row("dauletkhan").contains("без изменений"), "{t}");
+}
+
+#[test]
+fn matrix_scene_names_who_lacks_a_step_that_did_run() {
+    let scene = matrix_scene();
+    let mut st = RunState::default();
+    st.apply(item("n1", "People accounts", "didar", true, false));
+    let before = draw_report(&scene, &st);
+    assert!(
+        !before.contains("no SSH key"),
+        "task has not run yet: {before}"
+    );
+    st.apply(item("n1", "People accounts", "dauletkhan", false, false));
+    st.apply(item(
+        "n1",
+        "People SSH keys (exactly the GitLab ones)",
+        "dauletkhan",
+        false,
+        false,
+    ));
+    let t = draw_report(&scene, &st);
+    assert!(t.contains("! didar: no SSH key in GitLab"), "{t}");
+    assert!(!t.contains("dauletkhan: no SSH key"), "{t}");
+}
+
+#[test]
+fn matrix_scene_without_columns_is_an_error() {
+    let def: SceneDef =
+        serde_yaml_ng::from_str("id: m\nuse: matrix\nbind: { stages: [] }\n").unwrap();
+    assert!(Scene::from_def(&def).is_err());
+}

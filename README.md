@@ -35,7 +35,7 @@ touches nothing on its own.
 
 ## Status
 
-Version 0.1, early. macOS and Linux. Needs ansible-core 2.15 or newer and a Rust toolchain to
+Version 0.2, early. macOS and Linux. Needs ansible-core 2.15 or newer and a Rust toolchain to
 build. Not published to crates.io yet.
 
 ## Install
