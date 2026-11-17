@@ -92,7 +92,7 @@ impl Matrix {
                 .iter()
                 .filter(|i| task_matches(&col.task, &i.task))
             {
-                if !rows.contains(&i.item) {
+                if !i.item.trim().is_empty() && !rows.contains(&i.item) {
                     rows.push(i.item.clone());
                 }
             }

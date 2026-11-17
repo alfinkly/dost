@@ -806,3 +806,14 @@ fn matrix_scene_without_columns_is_an_error() {
         serde_yaml_ng::from_str("id: m\nuse: matrix\nbind: { stages: [] }\n").unwrap();
     assert!(Scene::from_def(&def).is_err());
 }
+
+#[test]
+fn matrix_scene_ignores_loop_items_without_a_label() {
+    let scene = matrix_scene();
+    let mut st = RunState::default();
+    st.apply(item("n1", "People accounts", "didar", false, false));
+    st.apply(item("n1", "People accounts", "", false, false));
+    let t = draw_report(&scene, &st);
+    let rows = t.lines().filter(|l| l.contains("без изменений")).count();
+    assert_eq!(rows, 1, "{t}");
+}
